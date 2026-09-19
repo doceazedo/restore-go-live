@@ -1,0 +1,14 @@
+{
+  "name": "restore-go-live",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "build": "pnpm --dir Vencord build",
+    "buildWeb": "pnpm --dir Vencord buildWeb",
+    "watch": "pnpm --dir Vencord build --watch",
+    "inject": "pnpm --dir Vencord inject",
+    "uninject": "pnpm --dir Vencord uninject"
+  }
+}
