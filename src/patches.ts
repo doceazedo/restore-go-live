@@ -10,14 +10,6 @@ export const streamStartPatch: PluginPatch = {
   }
 };
 
-export const streamStopPatch: PluginPatch = {
-  find: 'type:"STREAM_STOP"',
-  replacement: {
-    match: /(function (\i)\((\i)\)\{let .{0,200}?)(\i\.\i\.dispatch\(\{type:"STREAM_STOP")/,
-    replace: "$1if($self.onStreamStop($3))return;$4"
-  }
-};
-
 export const streamWatchPatch: PluginPatch = {
   find: 'type:"STREAM_WATCH"',
   replacement: {
@@ -47,6 +39,22 @@ export const streamTileErrorPatch: PluginPatch = {
   replacement: {
     match: /let (\i)=(\(0,\i\.\i\)\(\i\.x\.STREAM,(\i)\.user\.id\))/,
     replace: "let $1=$self.maskStreamError($3.user.id,$2)"
+  }
+};
+
+export const qualityChangePatch: PluginPatch = {
+  find: "useStreamSettingsItems",
+  replacement: {
+    match: /(\((\i),(\i),(\i),\i\)=>\{if\(\i\)\{)(if\(null!=\i\)\{let \i=\{qualityOptions:)/,
+    replace: "$1if($self.onQualityChange($3,$4))return;$5"
+  }
+};
+
+export const qualityLabelPatch: PluginPatch = {
+  find: "useStreamQualityIndicator",
+  replacement: {
+    match: /(if\(\i!==\i\.\i\.RESOLUTION_720\|\|\i===\i\.\i\.FPS_60\)return)(`[^`]*`)/,
+    replace: "$1 $self.qualityLabel()??$2"
   }
 };
 

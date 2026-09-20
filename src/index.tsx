@@ -5,13 +5,13 @@ import { Toasts } from "@webpack/common";
 
 import { parseStreamKey, streamKey } from "./core/session";
 import { broadcast } from "./broadcast";
-import { attachToAllVideos, diag, findModules, nat, voice } from "./diag";
-import { currentUserId, ownerOfVideoId, readVoiceStatus, voiceChannelId } from "./discord";
+import { attachToAllVideos, describeQuality, diag, findModules, nat, voice } from "./diag";
+import { currentUserId, dispatch, ownerOfVideoId, readVoiceStatus, voiceChannelId } from "./discord";
 import { currentBeacon } from "./signaling";
 import { IceConfig } from "./peers";
 import {
-  browserVideoSourcePatch, streamStartPatch, streamStopPatch, streamTileEndedPatch,
-  streamTileErrorPatch, streamWatchPatch, videoSourcePatch
+  browserVideoSourcePatch, qualityChangePatch, qualityLabelPatch, streamStartPatch,
+  streamTileEndedPatch, streamTileErrorPatch, streamWatchPatch, videoSourcePatch
 } from "./patches";
 import { videoGuardPatch } from "./videoGuard";
 import { watcher } from "./watch";
@@ -27,20 +27,6 @@ const settings = definePluginSettings({
     markers: [5, 10, 15, 20, 30, 50],
     default: 15,
     stickToMarkers: false
-  },
-  frameRate: {
-    type: OptionType.SLIDER,
-    description: "Capture frame rate",
-    markers: [15, 30, 60],
-    default: 60,
-    stickToMarkers: true
-  },
-  height: {
-    type: OptionType.SLIDER,
-    description: "Capture height",
-    markers: [720, 1080, 1440],
-    default: 1080,
-    stickToMarkers: true
   },
   stunServers: {
     type: OptionType.STRING,
@@ -76,12 +62,13 @@ export default definePlugin({
   patches: [
     videoGuardPatch,
     streamStartPatch,
-    streamStopPatch,
     streamWatchPatch,
     videoSourcePatch,
     browserVideoSourcePatch,
     streamTileEndedPatch,
-    streamTileErrorPatch
+    streamTileErrorPatch,
+    qualityLabelPatch,
+    qualityChangePatch
   ],
 
   async start() {
@@ -118,8 +105,6 @@ export default definePlugin({
 
     broadcast.start(target, {
       ice: ice(),
-      fps: settings.store.frameRate,
-      height: settings.store.height,
       budgetMbps: settings.store.uploadBudgetMbps
     }).then(() => {
       toast(broadcast.hasAudio ? "P2P stream live (with audio)" : "P2P stream live (no desktop audio)");
@@ -131,21 +116,24 @@ export default definePlugin({
     return true;
   },
 
-  onStreamStop(key?: string) {
-    logger.info(`onStreamStop(${key}) active=${broadcast.active}`);
-    if (!broadcast.active) return false;
-    void broadcast.stop();
-    return true;
-  },
-
   onStreamWatch(key: string) {
     if (!watcher.isOurs(key)) return false;
-    logger.info(`joining p2p for ${key}, letting discord STREAM_WATCH through`);
     watcher.join(key).catch(e => {
       logger.error("failed to join", e);
       toast(`Could not connect: ${e.message}`, Toasts.Type.FAILURE);
     });
     return false;
+  },
+
+  onQualityChange(resolution: number, frameRate: number) {
+    if (!broadcast.active) return false;
+    logger.info(`quality change requested: ${resolution}p ${frameRate}fps`);
+    dispatch({ type: "STREAM_UPDATE_SETTINGS", resolution, frameRate });
+    return true;
+  },
+
+  qualityLabel() {
+    return describeQuality(broadcast.stream ?? watcher.activeStream()) ?? undefined;
   },
 
   isOurStream(stream: any) {
@@ -174,15 +162,12 @@ export default definePlugin({
 
   resolveStream(streamId: any, original: () => { stream: MediaStream; release: () => void }) {
     const ours = this.p2pStreamFor(streamId);
-    logger.info(`resolveStream(${streamId}) -> ${ours ? `p2p tracks=${ours.getTracks().length}` : "discord"}`);
     if (ours) return { stream: ours, release: () => undefined };
     return original();
   },
 
   resolveStreamRaw(streamId: any, original: () => MediaStream) {
-    const ours = this.p2pStreamFor(streamId);
-    logger.info(`resolveStreamRaw(${streamId}) -> ${ours ? `p2p tracks=${ours.getTracks().length}` : "discord"}`);
-    return ours ?? original();
+    return this.p2pStreamFor(streamId) ?? original();
   },
 
   get isLive() {

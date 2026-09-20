@@ -6,14 +6,11 @@ const announceLogger = new Logger("P2PShare:announce");
 
 export const ApplicationStreamingStore = findStoreLazy("ApplicationStreamingStore");
 export const VoiceStateStore = findStoreLazy("VoiceStateStore");
-export const RTCConnectionStore = findStoreLazy("RTCConnectionStore");
 export const ChannelStatusStore = findStoreLazy("ChannelStatusStore");
+export const StreamingSettingsStore = findStoreLazy("ApplicationStreamingSettingsStore");
 
-export const ChannelActions = findByPropsLazy("updateVoiceChannelStatus");
 export const SocketHolder = findByPropsLazy("getSocket");
 export const CloudUpload: any = findLazy((m: any) => m.prototype?.trackUploadFinished);
-export const StreamActions = findByPropsLazy("startStream", "stopStream");
-export const DesktopSources = findByCodeLazy("getDesktopCaptureSources");
 
 export function currentUserId(): string {
   return UserStore.getCurrentUser()?.id ?? "";
@@ -77,15 +74,9 @@ export function announceStream(userId: string, channelId: string, on: boolean) {
     selfVideo: vs.selfVideo ?? false,
     discoverable: true
   };
-  announceLogger.info(`dispatch VOICE_STATE_UPDATES selfStream=${on}`, payload);
   dispatch({ type: "VOICE_STATE_UPDATES", voiceStates: [payload] });
 
   return true;
-}
-
-export function isInChannel(userId: string, channelId: string) {
-  const states = VoiceStateStore.getVoiceStatesForChannel?.(channelId) ?? {};
-  return Object.prototype.hasOwnProperty.call(states, userId);
 }
 
 export function guildIdOf(channelId: string | null) {
@@ -98,6 +89,16 @@ export async function setVoiceStatus(channelId: string, status: string | null) {
     url: `/channels/${channelId}/voice-status`,
     body: { status: status === "" ? null : status }
   });
+}
+
+export function streamQuality() {
+  const state = StreamingSettingsStore.getState?.() ?? {};
+  const resolution = Number(state.resolution);
+  const fps = Number(state.fps);
+  return {
+    height: Number.isFinite(resolution) && resolution > 0 ? resolution : 1080,
+    fps: Number.isFinite(fps) && fps > 0 ? fps : 30
+  };
 }
 
 export function requestChannelInfo(channelId: string) {
@@ -116,19 +117,13 @@ export function requestChannelInfo(channelId: string) {
 
 export function refreshAttached(stream: MediaStream) {
   let n = 0;
-  const seen: string[] = [];
   for (const el of document.querySelectorAll("video")) {
     const v = el as HTMLVideoElement;
-    const src = v.srcObject as MediaStream | null;
-    seen.push(src ? `${src.id.slice(0, 6)}(${src.getTracks().length})` : "none");
-    if (src !== stream) continue;
+    if (v.srcObject !== stream) continue;
     v.srcObject = null;
     v.srcObject = stream;
     void v.play().catch(() => undefined);
     n++;
-  }
-  if (n === 0) {
-    announceLogger.warn(`refreshAttached found no element with ${stream.id.slice(0, 6)}; videos=[${seen.join(", ")}]`);
   }
   return n;
 }
@@ -137,18 +132,6 @@ export function readVoiceStatus(channelId: string): string | null {
   const ch = channelOf(channelId);
   if (!ch) return null;
   return ChannelStatusStore.getChannelStatus(ch) ?? null;
-}
-
-export async function sendSignal(channelId: string, content: string) {
-  const res = await RestAPI.post({
-    url: Constants.Endpoints.MESSAGES(channelId),
-    body: {
-      content,
-      flags: 1 << 12,
-      nonce: String(Date.now())
-    }
-  });
-  return res.body?.id as string | undefined;
 }
 
 export function uploadText(channelId: string, filename: string, text: string) {

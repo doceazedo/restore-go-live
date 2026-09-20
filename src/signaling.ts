@@ -22,7 +22,7 @@ export interface Handshake {
 
 export async function publishBeacon(channelId: string, beacon: Beacon) {
   const text = encodeBeacon(beacon);
-  logger.info(`publishing beacon to ${channelId} (${text.length} chars): ${text}`);
+  logger.info(`publishing beacon to ${channelId}`);
   await setVoiceStatus(channelId, text);
 }
 
@@ -42,9 +42,7 @@ export function currentBeacon(channelId: string): Beacon | null {
 
 export function watchBeacons(cb: (channelId: string, beacon: Beacon | null) => void) {
   return subscribe("VOICE_CHANNEL_STATUS_UPDATE", (data: any) => {
-    const raw = data?.status;
-    const decoded = decodeBeacon(raw);
-    logger.info(`status update channel=${data?.id} raw=${JSON.stringify(raw)} decoded=${decoded ? decoded.sessionId : "none"}`);
+    const decoded = decodeBeacon(data?.status);
     cb(data?.id, decoded && !isStale(decoded) ? decoded : null);
   });
 }
@@ -101,7 +99,3 @@ export function watchAnswers(channelId: string, sessionId: string, cb: (h: Hands
   });
 }
 
-export function isSignalMessage(msg: any) {
-  return (msg?.attachments ?? []).some((a: any) =>
-    typeof a?.filename === "string" && (a.filename.startsWith(`${OFFER}.`) || a.filename.startsWith(`${ANSWER}.`)));
-}

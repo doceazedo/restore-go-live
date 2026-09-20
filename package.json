@@ -10,6 +10,7 @@
     "watch": "VENCORD_REMOTE=Vendicated/Vencord VENCORD_HASH=dev pnpm --dir Vencord build --watch",
     "inject": "pnpm --dir Vencord inject",
     "uninject": "pnpm --dir Vencord uninject",
-    "typecheck": "node scripts/typecheck.mjs"
+    "typecheck": "node scripts/typecheck.mjs",
+    "checkpatches": "node scripts/checkpatches.mjs"
   }
 }

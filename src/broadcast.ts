@@ -5,7 +5,7 @@ import { newSessionId, streamKey } from "./core/session";
 import { captureScreen, hasLiveAudio } from "./capture";
 import {
   addInterceptor, announceStream, announceVideo, currentUserId, deleteMessage, dispatch, guildIdOf,
-  subscribe
+  streamQuality, subscribe
 } from "./discord";
 import { answerViewer, applyBitrate, IceConfig, selectedPair, waitConnected } from "./peers";
 import { clearBeacon, Handshake, publishBeacon, sendAnswer, watchOffers } from "./signaling";
@@ -14,8 +14,6 @@ const logger = new Logger("P2PShare:broadcast");
 
 export interface BroadcastOptions {
   ice: IceConfig;
-  fps: number;
-  height: number;
   budgetMbps: number;
 }
 
@@ -50,7 +48,9 @@ class Broadcast {
     this.guildId = guildIdOf(channelId);
     this.sessionId = newSessionId();
 
-    const capture = await captureScreen(opts.fps, opts.height);
+    const { height, fps } = streamQuality();
+    logger.info(`capturing at ${height}p ${fps}fps from discord settings`);
+    const capture = await captureScreen(fps, height);
     this.stream = capture.stream;
     this.hasAudio = capture.hasAudio && (await hasLiveAudio(capture.stream));
 
@@ -88,6 +88,10 @@ class Broadcast {
       if (!this.active || action.streamKey !== this.key) return false;
       return true;
     }));
+
+    for (const event of ["STREAM_UPDATE_SETTINGS", "MEDIA_ENGINE_SET_GO_LIVE_SOURCE"]) {
+      this.stopHooks.push(subscribe(event, () => void this.applyQuality()));
+    }
 
     for (const event of ["STREAM_STOP", "STREAM_DELETE", "STREAM_CLOSE"]) {
       this.stopHooks.push(subscribe(event, () => {
@@ -161,8 +165,24 @@ class Broadcast {
     if (!announceStream(currentUserId(), this.channelId, on)) {
       logger.warn("no local voice state, native streaming UI will not update");
     }
-    const videoStreamId = announceVideo(currentUserId(), this.channelId, on);
-    logger.info(`announceSelf on=${on} videoStreamId=${videoStreamId}`);
+    announceVideo(currentUserId(), this.channelId, on);
+  }
+
+  private async applyQuality() {
+    const track = this.stream?.getVideoTracks()[0];
+    if (!track || track.readyState !== "live") return;
+
+    const { height, fps } = streamQuality();
+    const current = track.getSettings?.() ?? {};
+    if (current.height === height && current.frameRate === fps) return;
+
+    try {
+      await track.applyConstraints({ height: { ideal: height }, frameRate: { ideal: fps } });
+      const applied = track.getSettings?.() ?? {};
+      logger.info(`quality changed to ${height}p ${fps}fps, source now ${applied.height}p ${applied.frameRate}fps`);
+    } catch (e) {
+      logger.warn("could not apply new quality to live capture", e);
+    }
   }
 
   private async rebalance() {

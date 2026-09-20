@@ -79,6 +79,30 @@ export async function diag() {
   return report;
 }
 
+export function describeQuality(stream: MediaStream | null) {
+  const track = stream?.getVideoTracks()[0];
+  if (!track || track.readyState !== "live") return null;
+
+  const settings = track.getSettings?.() ?? {};
+  let height = Number(settings.height);
+  const fps = Number(settings.frameRate);
+
+  if (!Number.isFinite(height) || height <= 0) {
+    for (const el of document.querySelectorAll("video")) {
+      const v = el as HTMLVideoElement;
+      if (v.srcObject === stream && v.videoHeight > 0) {
+        height = v.videoHeight;
+        break;
+      }
+    }
+  }
+
+  if (!Number.isFinite(height) || height <= 0) return null;
+  return Number.isFinite(fps) && fps > 0
+    ? `${Math.round(height)}p ${Math.round(fps)}FPS`
+    : `${Math.round(height)}p`;
+}
+
 export async function nat(stunUrls: string[]) {
   const probe = async (urls: string[]) => {
     const pc = new RTCPeerConnection({ iceServers: [{ urls }] });

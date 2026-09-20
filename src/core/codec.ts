@@ -121,31 +121,3 @@ export function decode64(text: string) {
   return new Uint8Array(bytes);
 }
 
-export function ipv4ToBytes(ip: string) {
-  return new Uint8Array(ip.split(".").map(Number));
-}
-
-export function bytesToIpv4(bytes: Uint8Array) {
-  return [...bytes].join(".");
-}
-
-export function ipv6ToBytes(ip: string) {
-  const [head, tail] = ip.split("::");
-  const left = head ? head.split(":") : [];
-  const right = tail ? tail.split(":") : [];
-  const fill = new Array(8 - left.length - right.length).fill("0");
-  const groups = tail === undefined ? left : [...left, ...fill, ...right];
-  const out = new Uint8Array(16);
-  groups.forEach((g, i) => {
-    const v = parseInt(g || "0", 16);
-    out[i * 2] = v >> 8;
-    out[i * 2 + 1] = v & 0xff;
-  });
-  return out;
-}
-
-export function bytesToIpv6(bytes: Uint8Array) {
-  const groups: string[] = [];
-  for (let i = 0; i < 16; i += 2) groups.push(((bytes[i] << 8) | bytes[i + 1]).toString(16));
-  return groups.join(":").replace(/(^|:)(0:)+/, "::").replace(/:{3,}/, "::");
-}

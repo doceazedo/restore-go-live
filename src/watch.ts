@@ -3,7 +3,7 @@ import { Logger } from "@utils/Logger";
 import { Beacon } from "./core/beacon";
 import { streamKey } from "./core/session";
 import {
-  addInterceptor, announceStream, announceVideo, currentUserId, deleteMessage, dispatch, guildIdOf,
+  addInterceptor, announceStream, announceVideo, currentUserId, deleteMessage, guildIdOf,
   refreshAttached, requestChannelInfo, subscribe, voiceChannelId
 } from "./discord";
 import { createViewerOffer, IceConfig, selectedPair, waitConnected } from "./peers";
@@ -39,10 +39,6 @@ class Watcher {
       const key: string | undefined = action?.streamKey;
       const session = key ? this.sessions.get(key) : undefined;
       if (!session) return false;
-
-      if (type.startsWith("STREAM_") || type.startsWith("RTC_")) {
-        logger.info(`action ${type} for our session`);
-      }
 
       if (type === "STREAM_CLOSE") {
         if (session.pc) {
@@ -181,13 +177,9 @@ class Watcher {
       logger.info(`connected via ${await selectedPair(pc)}`);
 
       await ready;
-      const attached = session.stream ? refreshAttached(session.stream) : 0;
-      const remountId = announceVideo(session.beacon.ownerId, session.channelId, true);
-      logger.info(
-        `watching ${key} tracks=${session.stream?.getTracks().map(t => t.kind).join("+")}` +
-        ` reattached=${attached} remountId=${remountId}`
-      );
-      dispatch({ type: "P2PSHARE_STREAM_READY", key });
+      if (session.stream) refreshAttached(session.stream);
+      announceVideo(session.beacon.ownerId, session.channelId, true);
+      logger.info(`watching ${key} tracks=${session.stream?.getTracks().map(t => t.kind).join("+")}`);
     } catch (e) {
       session.pc?.close();
       session.pc = undefined;
