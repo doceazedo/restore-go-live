@@ -78,6 +78,20 @@ export async function diag() {
   return report;
 }
 
+export async function audioDevices() {
+  const { listInputs, pickLoopback } = await import("./audio");
+  const { platform } = await import("./capture");
+  const devices = await listInputs();
+  const report = {
+    platform: platform(),
+    labelsVisible: devices.some(d => !!d.label),
+    autoPick: pickLoopback(devices, "auto")?.label ?? null,
+    devices: devices.map(d => ({ label: d.label, looksLikeLoopback: d.looksLikeLoopback }))
+  };
+  console.log("=== P2P AUDIO ===\n" + JSON.stringify(report, null, 2));
+  return report;
+}
+
 export function describeQuality(stream: MediaStream | null) {
   const track = stream?.getVideoTracks()[0];
   if (!track || track.readyState !== "live") return null;

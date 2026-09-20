@@ -2,7 +2,7 @@ import { Logger } from "@utils/Logger";
 
 import { Beacon, HEARTBEAT_MS } from "./core/beacon";
 import { newSessionId, streamKey } from "./core/session";
-import { captureScreen, hasLiveAudio } from "./capture";
+import { captureScreen } from "./capture";
 import {
   addInterceptor, announceStream, announceVideo, currentUserId, dispatch, guildIdOf,
   streamQuality, subscribe
@@ -18,6 +18,7 @@ const logger = new Logger("P2PShare:broadcast");
 export interface BroadcastOptions {
   ice: IceConfig;
   budgetMbps: number;
+  audioPreference: string;
 }
 
 interface Viewer {
@@ -56,17 +57,10 @@ class Broadcast {
 
     const { height, fps } = streamQuality();
     logger.info(`capturing at ${height}p ${fps}fps from discord settings`);
-    const capture = await captureScreen(fps, height);
-    this.stream = capture.stream;
-    this.hasAudio = capture.hasAudio && (await hasLiveAudio(capture.stream));
 
-    if (capture.hasAudio && !this.hasAudio) {
-      logger.warn("audio track was silent, dropping it");
-      for (const t of capture.stream.getAudioTracks()) {
-        capture.stream.removeTrack(t);
-        t.stop();
-      }
-    }
+    const capture = await captureScreen(fps, height, opts.audioPreference);
+    this.stream = capture.stream;
+    this.hasAudio = capture.hasAudio;
 
     capture.stream.getVideoTracks()[0]?.addEventListener("ended", () => void this.stop());
 

@@ -5,7 +5,7 @@ import { Toasts } from "@webpack/common";
 
 import { parseStreamKey, streamKey } from "./core/session";
 import { broadcast } from "./broadcast";
-import { attachToAllVideos, describeQuality, diag, findModules, nat, voice } from "./diag";
+import { attachToAllVideos, audioDevices, describeQuality, diag, findModules, nat, voice } from "./diag";
 import { currentUserId, dispatch, ownerOfVideoId, voiceChannelId } from "./discord";
 import { scanBeacons } from "./signaling";
 import { IceConfig } from "./peers";
@@ -27,6 +27,11 @@ const settings = definePluginSettings({
     markers: [5, 10, 15, 20, 30, 50],
     default: 15,
     stickToMarkers: false
+  },
+  desktopAudio: {
+    type: OptionType.STRING,
+    description: "Desktop audio source: auto, off, or part of an input device name (BlackHole, Monitor, Stereo Mix)",
+    default: "auto"
   },
   stunServers: {
     type: OptionType.STRING,
@@ -81,13 +86,15 @@ export default definePlugin({
       findModules,
       voice,
       nat: () => nat(ice().stun),
+      audio: audioDevices,
       beacons: (channelId?: string) => scanBeacons(channelId ?? voiceChannelId()!),
       voiceChannelId
     };
 
     if (IS_DISCORD_DESKTOP) {
       const res = await Native.enableLoopbackAudio().catch(() => ({ ok: false, error: "ipc failed" }));
-      if (!res.ok) logger.warn("loopback audio unavailable", (res as any).error);
+      if (res.ok) logger.info("loopback audio handler installed", res);
+      else logger.warn("loopback audio unavailable", (res as any).error);
     }
     watcher.start(ice());
   },
@@ -104,9 +111,10 @@ export default definePlugin({
 
     broadcast.start(target, {
       ice: ice(),
-      budgetMbps: settings.store.uploadBudgetMbps
+      budgetMbps: settings.store.uploadBudgetMbps,
+      audioPreference: settings.store.desktopAudio
     }).then(() => {
-      toast(broadcast.hasAudio ? "P2P stream live (with audio)" : "P2P stream live (no desktop audio)");
+      toast(broadcast.hasAudio ? "P2P stream live with audio" : "P2P stream live, no desktop audio");
     }).catch(e => {
       logger.error("failed to start", e);
       toast(`P2P stream failed: ${e.message}`, Toasts.Type.FAILURE);
