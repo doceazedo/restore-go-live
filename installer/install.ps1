@@ -2,60 +2,84 @@ $ErrorActionPreference = "Stop"
 
 $repo = if ($env:P2P_REPO) { $env:P2P_REPO } else { "doceazedo/restore-go-live" }
 $baseUrl = if ($env:P2P_BASE_URL) { $env:P2P_BASE_URL } else { "https://github.com/$repo/releases/latest/download" }
+$branch = $env:P2P_DISCORD_BRANCH
 $files = @("patcher.js", "preload.js", "renderer.js", "renderer.css")
-
-function Say($msg) { Write-Host $msg }
 
 $data = Join-Path $env:APPDATA "Vencord"
 $distDir = Join-Path $data "dist"
 
-$branches = @("Discord", "DiscordPTB", "DiscordCanary", "DiscordDevelopment")
-$targets = @()
-foreach ($branch in $branches) {
-    $root = Join-Path $env:LOCALAPPDATA $branch
-    if (-not (Test-Path $root)) { continue }
-    Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | ForEach-Object {
-            $res = Join-Path $_.FullName "resources"
-            if (Test-Path (Join-Path $res "app.asar")) { $targets += $res }
-            elseif (Test-Path (Join-Path $res "_app.asar")) { $targets += $res }
-        }
+$branchDirs = [ordered]@{
+    stable = "Discord"
+    ptb    = "DiscordPTB"
+    canary = "DiscordCanary"
 }
 
-if ($targets.Count -eq 0) {
-    Say "error: no Discord installation found, install Discord and launch it once first"
+$found = [ordered]@{}
+foreach ($label in $branchDirs.Keys) {
+    $root = Join-Path $env:LOCALAPPDATA $branchDirs[$label]
+    if (-not (Test-Path $root)) { continue }
+    $res = Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName "resources" } |
+        Where-Object { (Test-Path (Join-Path $_ "app.asar")) -or (Test-Path (Join-Path $_ "_app.asar")) } |
+        Select-Object -First 1
+    if ($res) { $found[$label] = $res }
+}
+
+if ($found.Count -eq 0) {
+    Write-Host "error: no Discord installation found, install Discord and launch it once first"
     exit 1
 }
 
-Say "downloading RestoreGoLive..."
+$default = if ($found.Contains("stable")) { "stable" } else { @($found.Keys)[0] }
+
+if ($found.Count -gt 1 -and -not $branch) {
+    $opts = (@($found.Keys) + "all") -join "/"
+    $branch = Read-Host "which Discord installation do you want to patch? ($opts) [$default]"
+}
+
+$branch = if ($branch) { $branch.Trim().ToLower() } else { $default }
+
+$targets = [ordered]@{}
+if ($branch -eq "all") {
+    $targets = $found
+} elseif ($found.Contains($branch)) {
+    $targets[$branch] = $found[$branch]
+} else {
+    $first = @($found.Keys)[0]
+    Write-Host "no '$branch' install found, using $first instead"
+    $targets[$first] = $found[$first]
+}
+
+Write-Host ""
+Write-Host "downloading RestoreGoLive..."
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 foreach ($f in $files) {
     try {
         Invoke-WebRequest -Uri "$baseUrl/$f" -OutFile (Join-Path $distDir $f) -UseBasicParsing
     } catch {
-        Say "error: could not download $f"
+        Write-Host "error: could not download $f"
         exit 1
     }
 }
 Set-Content -Path (Join-Path $distDir "package.json") -Value "{}" -NoNewline
-Say "plugin files installed to $distDir"
+Write-Host "plugin files installed to $distDir"
 
 $patcher = (Join-Path $distDir "patcher.js") -replace '\\', '\\'
 
-foreach ($res in $targets) {
-    $label = Split-Path (Split-Path $res -Parent) -Leaf
-    Say ""
-    Say "-> $label"
+foreach ($label in $targets.Keys) {
+    $res = $targets[$label]
+    Write-Host ""
+    Write-Host "-> $label"
 
     if (Test-Path (Join-Path $res "_app.asar")) {
-        Say "   already patched by an earlier install, plugin files refreshed"
+        Write-Host "   already patched, plugin files refreshed"
         continue
     }
-
     try {
         Move-Item -Path (Join-Path $res "app.asar") -Destination (Join-Path $res "_app.asar") -Force
     } catch {
-        Say "   FAILED: cannot write to $res, close Discord and try again"
+        Write-Host "   FAILED: cannot write to $res, fully close Discord and try again"
         continue
     }
 
@@ -63,8 +87,8 @@ foreach ($res in $targets) {
     New-Item -ItemType Directory -Force -Path $appDir | Out-Null
     Set-Content -Path (Join-Path $appDir "index.js") -Value "require(`"$patcher`");"
     Set-Content -Path (Join-Path $appDir "package.json") -Value '{"name":"discord","main":"index.js"}'
-    Say "   patched"
+    Write-Host "   patched"
 }
 
-Say ""
-Say "done! fully quit and reopen Discord :)"
+Write-Host ""
+Write-Host "done! fully quit and reopen Discord :)"
