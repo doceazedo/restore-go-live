@@ -51,11 +51,11 @@ jobs:
 
           Windows:
           \`\`\`powershell
-          irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex
+          irm https://doce.sh/restore-go-live/install.ps1 | iex
           \`\`\`
 
           macOS / Linux:
           \`\`\`sh
-          curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash
+          curl -fsSL https://doce.sh/restore-go-live/install.sh | bash
           \`\`\`" \
             release/*

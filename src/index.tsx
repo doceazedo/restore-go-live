@@ -83,8 +83,7 @@ function toast(message: string, type: string = Toasts.Type.MESSAGE) {
 
 export default definePlugin({
   name: "RestoreGoLive",
-  description:
-    "Replaces Discord's Go Live with direct peer-to-peer screen sharing",
+  description: "Replaces Discord's Go Live with P2P screen sharing",
   tags: ["Voice", "Media"],
   authors: [{ name: "doceazedo911", id: 241978119899185165n }],
   required: false,
