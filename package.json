@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "build": "pnpm --dir Vencord build",
-    "buildWeb": "pnpm --dir Vencord buildWeb",
-    "watch": "pnpm --dir Vencord build --watch",
+    "build": "VENCORD_REMOTE=Vendicated/Vencord VENCORD_HASH=dev pnpm --dir Vencord build",
+    "buildWeb": "VENCORD_REMOTE=Vendicated/Vencord VENCORD_HASH=dev pnpm --dir Vencord buildWeb",
+    "watch": "VENCORD_REMOTE=Vendicated/Vencord VENCORD_HASH=dev pnpm --dir Vencord build --watch",
     "inject": "pnpm --dir Vencord inject",
-    "uninject": "pnpm --dir Vencord uninject"
+    "uninject": "pnpm --dir Vencord uninject",
+    "typecheck": "node scripts/typecheck.mjs"
   }
 }

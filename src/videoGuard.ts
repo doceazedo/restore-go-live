@@ -1,6 +1,8 @@
 import { Patch } from "@utils/types";
 
-export const videoGuardPatch: Patch = {
+type PluginPatch = Omit<Patch, "plugin">;
+
+export const videoGuardPatch: PluginPatch = {
   find: '"2026-08-video-guard"',
   replacement: {
     match:

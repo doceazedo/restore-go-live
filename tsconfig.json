@@ -5,7 +5,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "allowJs": true,
-    "lib": ["DOM", "DOM.Iterable", "esnext"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "esnext"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -13,22 +17,56 @@
     "target": "ESNEXT",
     "jsx": "preserve",
     "noEmit": true,
-
     "paths": {
-      "@main/*": ["./Vencord/src/main/*"],
-      "@api/*": ["./Vencord/src/api/*"],
-      "@components/*": ["./Vencord/src/components/*"],
-      "@debug/*": ["./Vencord/src/debug/*"],
-      "@utils/*": ["./Vencord/src/utils/*"],
-      "@plugins/*": ["./Vencord/src/plugins/*"],
-      "@shared/*": ["./Vencord/src/shared/*"],
-      "@webpack/common": ["./Vencord/src/webpack/common"],
-      "@webpack/common/*": ["./Vencord/src/webpack/common/*"],
-      "@webpack": ["./Vencord/src/webpack/webpack"],
-      "@webpack/patcher": ["./Vencord/src/webpack/patchWebpack"],
-      "@webpack/wreq.d": ["./Vencord/src/webpack/wreq.d"],
-      "@webpack/types": ["./Vencord/src/webpack/types"]
-    }
+      "@main/*": [
+        "./Vencord/src/main/*"
+      ],
+      "@api/*": [
+        "./Vencord/src/api/*"
+      ],
+      "@components/*": [
+        "./Vencord/src/components/*"
+      ],
+      "@debug/*": [
+        "./Vencord/src/debug/*"
+      ],
+      "@utils/*": [
+        "./Vencord/src/utils/*"
+      ],
+      "@plugins/*": [
+        "./Vencord/src/plugins/*"
+      ],
+      "@shared/*": [
+        "./Vencord/src/shared/*"
+      ],
+      "@webpack/common": [
+        "./Vencord/src/webpack/common"
+      ],
+      "@webpack/common/*": [
+        "./Vencord/src/webpack/common/*"
+      ],
+      "@webpack": [
+        "./Vencord/src/webpack/webpack"
+      ],
+      "@webpack/patcher": [
+        "./Vencord/src/webpack/patchWebpack"
+      ],
+      "@webpack/wreq.d": [
+        "./Vencord/src/webpack/wreq.d"
+      ],
+      "@webpack/types": [
+        "./Vencord/src/webpack/types"
+      ]
+    },
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "./Vencord/node_modules/@types"
+    ]
   },
-  "include": ["src/**/*", "scripts/**/*"]
+  "include": [
+    "src/**/*",
+    "scripts/**/*"
+  ]
 }
