@@ -2,6 +2,7 @@ import { execFileSync } from "child_process";
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -71,6 +72,7 @@ if (installer.includes("VencordInstaller.MacOS.zip")) {
   console.log("runInstaller.mjs already patched or fixed upstream, skipping");
 }
 
+mkdirSync(dirname(PLUGIN_LINK), { recursive: true });
 if (
   existsSync(PLUGIN_LINK) ||
   lstatSync(PLUGIN_LINK, { throwIfNoEntry: false })
