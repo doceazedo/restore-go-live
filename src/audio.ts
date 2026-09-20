@@ -12,7 +12,7 @@ const LOOPBACK_HINTS = [
   /vb-?audio/i,
   /voicemeeter/i,
   /virtual\s*(audio|cable)/i,
-  /pipewire/i
+  /pipewire/i,
 ];
 
 export interface AudioDevice {
@@ -24,20 +24,20 @@ export interface AudioDevice {
 export async function listInputs(): Promise<AudioDevice[]> {
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices
-    .filter(d => d.kind === "audioinput")
-    .map(d => ({
+    .filter((d) => d.kind === "audioinput")
+    .map((d) => ({
       deviceId: d.deviceId,
       label: d.label,
-      looksLikeLoopback: LOOPBACK_HINTS.some(re => re.test(d.label))
+      looksLikeLoopback: LOOPBACK_HINTS.some((re) => re.test(d.label)),
     }));
 }
 
 export function pickLoopback(devices: AudioDevice[], preference: string) {
   const wanted = preference.trim().toLowerCase();
   if (wanted && wanted !== "auto") {
-    return devices.find(d => d.label.toLowerCase().includes(wanted)) ?? null;
+    return devices.find((d) => d.label.toLowerCase().includes(wanted)) ?? null;
   }
-  return devices.find(d => d.looksLikeLoopback) ?? null;
+  return devices.find((d) => d.looksLikeLoopback) ?? null;
 }
 
 export async function captureFromDevice(deviceId: string) {
@@ -46,8 +46,8 @@ export async function captureFromDevice(deviceId: string) {
       deviceId: { exact: deviceId },
       autoGainControl: false,
       echoCancellation: false,
-      noiseSuppression: false
-    }
+      noiseSuppression: false,
+    },
   });
   return stream.getAudioTracks()[0] ?? null;
 }
@@ -68,8 +68,8 @@ export async function hasSignal(track: MediaStreamTrack, ms = 1500) {
 
     while (Date.now() < deadline) {
       analyser.getByteTimeDomainData(data);
-      if (data.some(v => v < 126 || v > 130)) return true;
-      await new Promise(r => setTimeout(r, 100));
+      if (data.some((v) => v < 126 || v > 130)) return true;
+      await new Promise((r) => setTimeout(r, 100));
     }
     return false;
   } catch (e) {
@@ -85,8 +85,10 @@ export async function loopbackTrack(preference: string) {
 
   try {
     const devices = await listInputs();
-    if (!devices.some(d => d.label)) {
-      logger.warn("device labels unavailable - cannot identify a loopback input");
+    if (!devices.some((d) => d.label)) {
+      logger.warn(
+        "device labels unavailable, cannot identify a loopback input",
+      );
       return null;
     }
 

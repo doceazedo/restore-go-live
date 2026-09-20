@@ -4,12 +4,29 @@ import { Beacon, HEARTBEAT_MS, isStale } from "./core/beacon";
 import { broadcast } from "./broadcast";
 import { streamKey } from "./core/session";
 import {
-  addInterceptor, announceStream, announceVideo, currentUserId, guildIdOf,
-  refreshAttached, subscribe, voiceChannelId
+  addInterceptor,
+  announceStream,
+  announceVideo,
+  currentUserId,
+  guildIdOf,
+  refreshAttached,
+  subscribe,
+  voiceChannelId,
 } from "./discord";
-import { createViewerOffer, IceConfig, selectedPair, waitConnected } from "./peers";
 import {
-  cleanupOwnLeftovers, deleteOwn, LiveBeacon, scanBeacons, sendOffer, watchAnswers, watchBeacons
+  createViewerOffer,
+  IceConfig,
+  selectedPair,
+  waitConnected,
+} from "./peers";
+import {
+  cleanupOwnLeftovers,
+  deleteOwn,
+  LiveBeacon,
+  scanBeacons,
+  sendOffer,
+  watchAnswers,
+  watchBeacons,
 } from "./signaling";
 
 const logger = new Logger("P2PShare:watch");
@@ -36,33 +53,40 @@ class Watcher {
   start(ice: IceConfig) {
     this.ice = ice;
     this.stopBeacons = watchBeacons(
-      live => this.onBeacon(live),
-      (channelId, messageId) => this.onBeaconGone(channelId, messageId)
+      (live) => this.onBeacon(live),
+      (channelId, messageId) => this.onBeaconGone(channelId, messageId),
     );
     this.sweeper = setInterval(() => this.sweep(), HEARTBEAT_MS);
 
-    for (const event of ["VOICE_CHANNEL_SELECT", "RTC_CONNECTION_STATE", "CHANNEL_INFO"]) {
+    for (const event of [
+      "VOICE_CHANNEL_SELECT",
+      "RTC_CONNECTION_STATE",
+      "CHANNEL_INFO",
+    ]) {
       this.extra.push(subscribe(event, () => this.rescan()));
     }
 
-    this.extra.push(addInterceptor((action: any) => {
-      const type: string = action?.type ?? "";
-      const key: string | undefined = action?.streamKey;
-      const session = key ? this.sessions.get(key) : undefined;
-      if (!session) return false;
+    this.extra.push(
+      addInterceptor((action: any) => {
+        const type: string = action?.type ?? "";
+        const key: string | undefined = action?.streamKey;
+        const session = key ? this.sessions.get(key) : undefined;
+        if (!session) return false;
 
-      if (type === "STREAM_CLOSE") {
-        if (session.pc) {
-          logger.info(`user closed ${key}, tearing down p2p`);
-          this.leave(key!);
+        if (type === "STREAM_CLOSE") {
+          if (session.pc) {
+            logger.info(`user closed ${key}, tearing down p2p`);
+            this.leave(key!);
+          }
+          return false;
         }
+
+        if (type === "STREAM_DELETE" || type === "STREAM_TIMED_OUT")
+          return true;
+
         return false;
-      }
-
-      if (type === "STREAM_DELETE" || type === "STREAM_TIMED_OUT") return true;
-
-      return false;
-    }));
+      }),
+    );
 
     this.rescan();
   }
@@ -73,7 +97,7 @@ class Watcher {
     this.lastScanned = vc;
     void cleanupOwnLeftovers(vc, broadcast.beaconMessageId)
       .then(() => scanBeacons(vc))
-      .then(found => {
+      .then((found) => {
         if (voiceChannelId() !== vc) return;
         for (const live of found) this.onBeacon(live);
       });
@@ -113,10 +137,18 @@ class Watcher {
 
     if (existing) this.forget(key);
 
-    const session: Session = { beacon, ownerId, channelId, messageId, stream: new MediaStream() };
+    const session: Session = {
+      beacon,
+      ownerId,
+      channelId,
+      messageId,
+      stream: new MediaStream(),
+    };
     this.sessions.set(key, session);
     this.announceLocal(session, true);
-    logger.info(`${ownerId} is live (session ${beacon.sessionId}, audio=${beacon.hasAudio})`);
+    logger.info(
+      `${ownerId} is live (session ${beacon.sessionId}, audio=${beacon.hasAudio})`,
+    );
   }
 
   private onBeaconGone(channelId: string, messageId: string) {
@@ -136,7 +168,9 @@ class Watcher {
       return;
     }
     const videoStreamId = announceVideo(owner, s.channelId, on);
-    logger.info(`announced selfStream=${on} for ${owner} videoStreamId=${videoStreamId}`);
+    logger.info(
+      `announced selfStream=${on} for ${owner} videoStreamId=${videoStreamId}`,
+    );
   }
 
   isOurs(key: string) {
@@ -154,7 +188,8 @@ class Watcher {
   }
 
   streamForOwner(userId: string) {
-    for (const [, s] of this.sessions) if (s.ownerId === userId) return s.stream ?? null;
+    for (const [, s] of this.sessions)
+      if (s.ownerId === userId) return s.stream ?? null;
     return null;
   }
 
@@ -165,7 +200,11 @@ class Watcher {
 
     try {
       logger.info(`joining ${key}`);
-      const { pc, ready, sdp } = await createViewerOffer(this.ice, session.beacon.hasAudio, session.stream);
+      const { pc, ready, sdp } = await createViewerOffer(
+        this.ice,
+        session.beacon.hasAudio,
+        session.stream,
+      );
       session.pc = pc;
 
       const answered = new Promise<string>((resolve, reject) => {
@@ -173,18 +212,26 @@ class Watcher {
           stop();
           reject(new Error("broadcaster did not answer"));
         }, 30000);
-        const stop = watchAnswers(session.channelId, () => session.offerMessageId ?? null, (h, msg) => {
-          if (msg.author?.id !== session.ownerId || h.s !== session.beacon.sessionId) return;
-          clearTimeout(timer);
-          stop();
-          resolve(h.sdp);
-        });
+        const stop = watchAnswers(
+          session.channelId,
+          () => session.offerMessageId ?? null,
+          (h, msg) => {
+            if (
+              msg.author?.id !== session.ownerId ||
+              h.s !== session.beacon.sessionId
+            )
+              return;
+            clearTimeout(timer);
+            stop();
+            resolve(h.sdp);
+          },
+        );
       });
 
       session.offerMessageId = await sendOffer(
         session.channelId,
         { s: session.beacon.sessionId, sdp },
-        session.messageId
+        session.messageId,
       );
 
       const answerSdp = await answered;
@@ -193,7 +240,9 @@ class Watcher {
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
       if (!(await waitConnected(pc))) {
-        throw new Error("no direct route to broadcaster - run __p2p.nat() on both peers");
+        throw new Error(
+          "no direct route to broadcaster, run __p2p.nat() on both peers",
+        );
       }
 
       logger.info(`connected via ${await selectedPair(pc)}`);
@@ -201,7 +250,12 @@ class Watcher {
       await ready;
       if (session.stream) refreshAttached(session.stream);
       announceVideo(session.ownerId, session.channelId, true);
-      logger.info(`watching ${key} tracks=${session.stream?.getTracks().map(t => t.kind).join("+")}`);
+      logger.info(
+        `watching ${key} tracks=${session.stream
+          ?.getTracks()
+          .map((t) => t.kind)
+          .join("+")}`,
+      );
     } catch (e) {
       session.pc?.close();
       session.pc = undefined;

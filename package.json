@@ -11,6 +11,7 @@
     "inject": "pnpm --dir Vencord inject",
     "uninject": "pnpm --dir Vencord uninject",
     "typecheck": "node scripts/typecheck.mjs",
-    "checkpatches": "node scripts/checkpatches.mjs"
+    "checkpatches": "node scripts/checkpatches.mjs",
+    "package": "node scripts/package-release.mjs"
   }
 }

@@ -1,6 +1,10 @@
 import { broadcast } from "./broadcast";
 import {
-  ApplicationStreamingStore, currentUserId, guildIdOf, voiceChannelId, VoiceStateStore
+  ApplicationStreamingStore,
+  currentUserId,
+  guildIdOf,
+  voiceChannelId,
+  VoiceStateStore,
 } from "./discord";
 import { scanBeacons } from "./signaling";
 import { watcher } from "./watch";
@@ -16,13 +20,17 @@ function describeTrack(t: MediaStreamTrack) {
     muted: t.muted,
     width: (s as any).width,
     height: (s as any).height,
-    frameRate: (s as any).frameRate
+    frameRate: (s as any).frameRate,
   };
 }
 
 function describeStream(s: MediaStream | null) {
   if (!s) return null;
-  return { id: s.id.slice(0, 8), active: s.active, tracks: s.getTracks().map(describeTrack) };
+  return {
+    id: s.id.slice(0, 8),
+    active: s.active,
+    tracks: s.getTracks().map(describeTrack),
+  };
 }
 
 function describeVideos() {
@@ -40,8 +48,12 @@ function describeVideos() {
       readyState: v.readyState,
       currentTime: Number(v.currentTime.toFixed(2)),
       srcObject: src ? src.id.slice(0, 8) : null,
-      srcTracks: src ? src.getTracks().map(t => `${t.kind}:${t.readyState}${t.muted ? ":muted" : ""}`) : [],
-      isOurs: !!src && !!ours && src.id === ours.id
+      srcTracks: src
+        ? src
+            .getTracks()
+            .map((t) => `${t.kind}:${t.readyState}${t.muted ? ":muted" : ""}`)
+        : [],
+      isOurs: !!src && !!ours && src.id === ours.id,
     };
   });
 }
@@ -49,12 +61,14 @@ function describeVideos() {
 export async function diag() {
   const vc = voiceChannelId();
   const before = describeVideos();
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1000));
   const after = describeVideos();
 
   const advancing = after.map((v, i) => ({
     i: v.i,
-    advanced: Number((v.currentTime - (before[i]?.currentTime ?? 0)).toFixed(2))
+    advanced: Number(
+      (v.currentTime - (before[i]?.currentTime ?? 0)).toFixed(2),
+    ),
   }));
 
   const report = {
@@ -67,11 +81,11 @@ export async function diag() {
     viewers: [...broadcast.viewers.entries()].map(([id, v]) => ({
       id,
       connection: v.pc.connectionState,
-      ice: v.pc.iceConnectionState
+      ice: v.pc.iceConnectionState,
     })),
     watchedStream: describeStream(watcher.activeStream()),
     videos: after,
-    frameAdvanceOver1s: advancing
+    frameAdvanceOver1s: advancing,
   };
 
   console.log("=== P2P DIAG ===\n" + JSON.stringify(report, null, 2));
@@ -84,9 +98,12 @@ export async function audioDevices() {
   const devices = await listInputs();
   const report = {
     platform: platform(),
-    labelsVisible: devices.some(d => !!d.label),
+    labelsVisible: devices.some((d) => !!d.label),
     autoPick: pickLoopback(devices, "auto")?.label ?? null,
-    devices: devices.map(d => ({ label: d.label, looksLikeLoopback: d.looksLikeLoopback }))
+    devices: devices.map((d) => ({
+      label: d.label,
+      looksLikeLoopback: d.looksLikeLoopback,
+    })),
   };
   console.log("=== P2P AUDIO ===\n" + JSON.stringify(report, null, 2));
   return report;
@@ -121,9 +138,12 @@ export async function nat(stunUrls: string[]) {
     const pc = new RTCPeerConnection({ iceServers: [{ urls }] });
     pc.createDataChannel("probe");
     const cands: RTCIceCandidate[] = [];
-    pc.addEventListener("icecandidate", e => e.candidate && cands.push(e.candidate));
+    pc.addEventListener(
+      "icecandidate",
+      (e) => e.candidate && cands.push(e.candidate),
+    );
     await pc.setLocalDescription(await pc.createOffer());
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise((r) => setTimeout(r, 5000));
     pc.close();
     return cands;
   };
@@ -134,27 +154,29 @@ export async function nat(stunUrls: string[]) {
     v6: (c.address ?? "").includes(":"),
     address: c.address,
     port: c.port,
-    related: c.relatedPort
+    related: c.relatedPort,
   });
   const parsed = all.map(parse);
 
-  const hostV6 = parsed.filter(c => c.type === "host" && c.v6 && !/^fe80:/i.test(c.address ?? ""));
-  const srflx = parsed.filter(c => c.type === "srflx");
-  const srflxPorts = new Set(srflx.map(c => c.port));
+  const hostV6 = parsed.filter(
+    (c) => c.type === "host" && c.v6 && !/^fe80:/i.test(c.address ?? ""),
+  );
+  const srflx = parsed.filter((c) => c.type === "srflx");
+  const srflxPorts = new Set(srflx.map((c) => c.port));
 
   const symmetric = srflx.length > 1 && srflxPorts.size > 1;
 
   const verdict = hostV6.length
-    ? "IPv6 available - direct connection should work even behind CGNAT"
+    ? "IPv6 available, direct connection should work even behind CGNAT"
     : symmetric
-      ? "symmetric NAT and no IPv6 - this peer cannot connect directly"
+      ? "symmetric NAT and no IPv6, this peer cannot connect directly"
       : srflx.length
-        ? "cone NAT with no IPv6 - direct connection usually works"
-        : "no public candidates found - check network";
+        ? "cone NAT with no IPv6, direct connection usually works"
+        : "no public candidates found, check network";
 
   const report = {
-    globalIPv6: hostV6.map(c => c.address),
-    publicIPv4: [...new Set(srflx.filter(c => !c.v6).map(c => c.address))],
+    globalIPv6: hostV6.map((c) => c.address),
+    publicIPv4: [...new Set(srflx.filter((c) => !c.v6).map((c) => c.address))],
     srflxPorts: [...srflxPorts],
     symmetricNat: symmetric,
     candidateTypes: parsed.reduce((acc: any, c) => {
@@ -162,7 +184,7 @@ export async function nat(stunUrls: string[]) {
       acc[k] = (acc[k] ?? 0) + 1;
       return acc;
     }, {}),
-    verdict
+    verdict,
   };
 
   console.log("=== P2P NAT ===\n" + JSON.stringify(report, null, 2));
@@ -185,16 +207,17 @@ export function voice() {
       sessionId: v?.sessionId,
       selfStream: v?.selfStream,
       selfVideo: v?.selfVideo,
-      channelId: v?.channelId
+      channelId: v?.channelId,
     })),
-    streamsForUsers: Object.keys(states).map(id => ({
+    streamsForUsers: Object.keys(states).map((id) => ({
       userId: id,
       anyStream: ApplicationStreamingStore.getAnyStreamForUser?.(id) ?? null,
-      currentUserStream: id === currentUserId()
-        ? ApplicationStreamingStore.getCurrentUserActiveStream?.() ?? null
-        : undefined
+      currentUserStream:
+        id === currentUserId()
+          ? (ApplicationStreamingStore.getCurrentUserActiveStream?.() ?? null)
+          : undefined,
     })),
-    allStreams: ApplicationStreamingStore.getAllApplicationStreams?.() ?? []
+    allStreams: ApplicationStreamingStore.getAllApplicationStreams?.() ?? [],
   };
 
   console.log("=== P2P VOICE ===\n" + JSON.stringify(report, null, 2));
@@ -216,10 +239,16 @@ export function findModules(pattern: string, context = 300, limit = 4) {
     const m = re.exec(src);
     if (!m) continue;
     const at = m.index ?? 0;
-    hits.push({ id, snippet: src.slice(Math.max(0, at - context), at + context) });
+    hits.push({
+      id,
+      snippet: src.slice(Math.max(0, at - context), at + context),
+    });
     if (hits.length >= limit) break;
   }
-  console.log(`=== findModules(${pattern}) -> ${hits.length} ===\n` + JSON.stringify(hits, null, 2));
+  console.log(
+    `=== findModules(${pattern}) -> ${hits.length} ===\n` +
+      JSON.stringify(hits, null, 2),
+  );
   return hits;
 }
 
