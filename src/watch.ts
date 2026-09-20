@@ -1,34 +1,45 @@
 import { Logger } from "@utils/Logger";
 
-import { Beacon } from "./core/beacon";
+import { Beacon, HEARTBEAT_MS, isStale } from "./core/beacon";
+import { broadcast } from "./broadcast";
 import { streamKey } from "./core/session";
 import {
-  addInterceptor, announceStream, announceVideo, currentUserId, deleteMessage, guildIdOf,
-  refreshAttached, requestChannelInfo, subscribe, voiceChannelId
+  addInterceptor, announceStream, announceVideo, currentUserId, guildIdOf,
+  refreshAttached, subscribe, voiceChannelId
 } from "./discord";
 import { createViewerOffer, IceConfig, selectedPair, waitConnected } from "./peers";
-import { currentBeacon, sendOffer, watchAnswers, watchBeacons } from "./signaling";
+import {
+  cleanupOwnLeftovers, deleteOwn, LiveBeacon, scanBeacons, sendOffer, watchAnswers, watchBeacons
+} from "./signaling";
 
 const logger = new Logger("P2PShare:watch");
 
 interface Session {
   beacon: Beacon;
+  ownerId: string;
   channelId: string;
+  messageId: string;
   pc?: RTCPeerConnection;
   stream?: MediaStream;
   joining?: boolean;
+  offerMessageId?: string;
 }
 
 class Watcher {
   private sessions = new Map<string, Session>();
   private stopBeacons: (() => void) | null = null;
+  private sweeper: ReturnType<typeof setInterval> | null = null;
   private extra: Array<() => void> = [];
   private lastScanned: string | null = null;
   private ice: IceConfig = { stun: [] };
 
   start(ice: IceConfig) {
     this.ice = ice;
-    this.stopBeacons = watchBeacons((channelId, beacon) => this.onBeacon(channelId, beacon));
+    this.stopBeacons = watchBeacons(
+      live => this.onBeacon(live),
+      (channelId, messageId) => this.onBeaconGone(channelId, messageId)
+    );
+    this.sweeper = setInterval(() => this.sweep(), HEARTBEAT_MS);
 
     for (const event of ["VOICE_CHANNEL_SELECT", "RTC_CONNECTION_STATE", "CHANNEL_INFO"]) {
       this.extra.push(subscribe(event, () => this.rescan()));
@@ -60,55 +71,65 @@ class Watcher {
     const vc = voiceChannelId();
     if (!vc || vc === this.lastScanned) return;
     this.lastScanned = vc;
+    void cleanupOwnLeftovers(vc, broadcast.beaconMessageId)
+      .then(() => scanBeacons(vc))
+      .then(found => {
+        if (voiceChannelId() !== vc) return;
+        for (const live of found) this.onBeacon(live);
+      });
+  }
 
-    requestChannelInfo(vc);
-
-    let attempt = 0;
-    const tick = () => {
-      if (voiceChannelId() !== vc) return;
-      const beacon = currentBeacon(vc);
-      if (beacon) {
-        logger.info(`rescan found beacon in ${vc} from ${beacon.ownerId}`);
-        this.onBeacon(vc, beacon);
-        return;
+  private sweep() {
+    for (const [key, s] of [...this.sessions]) {
+      if (isStale(s.beacon)) {
+        logger.info(`${s.ownerId} stopped heartbeating, dropping ${key}`);
+        this.forget(key);
       }
-      if (++attempt < 3) setTimeout(tick, attempt * 1500);
-    };
-    tick();
+    }
   }
 
   stop() {
     this.stopBeacons?.();
     this.stopBeacons = null;
+    if (this.sweeper) clearInterval(this.sweeper);
+    this.sweeper = null;
     for (const off of this.extra) off();
     this.extra = [];
     this.lastScanned = null;
     for (const key of [...this.sessions.keys()]) this.forget(key);
   }
 
-  private onBeacon(channelId: string, beacon: Beacon | null) {
-    if (!channelId) return;
+  private onBeacon(live: LiveBeacon) {
+    const { beacon, ownerId, channelId, messageId } = live;
+    if (ownerId === currentUserId()) return;
 
-    if (!beacon) {
-      for (const [key, s] of [...this.sessions]) {
-        if (s.channelId === channelId) this.forget(key);
-      }
+    const key = streamKey(guildIdOf(channelId), channelId, ownerId);
+    const existing = this.sessions.get(key);
+
+    if (existing?.beacon.sessionId === beacon.sessionId) {
+      existing.beacon = beacon;
       return;
     }
 
-    if (beacon.ownerId === currentUserId()) return;
+    if (existing) this.forget(key);
 
-    const key = streamKey(guildIdOf(channelId), channelId, beacon.ownerId);
-    if (this.sessions.get(key)?.beacon.sessionId === beacon.sessionId) return;
-
-    const session: Session = { beacon, channelId, stream: new MediaStream() };
+    const session: Session = { beacon, ownerId, channelId, messageId, stream: new MediaStream() };
     this.sessions.set(key, session);
     this.announceLocal(session, true);
-    logger.info(`beacon from ${beacon.ownerId} session=${beacon.sessionId} audio=${beacon.hasAudio}`);
+    logger.info(`${ownerId} is live (session ${beacon.sessionId}, audio=${beacon.hasAudio})`);
+  }
+
+  private onBeaconGone(channelId: string, messageId: string) {
+    for (const [key, s] of [...this.sessions]) {
+      if (s.channelId === channelId && s.messageId === messageId) {
+        logger.info(`beacon for ${s.ownerId} removed`);
+        this.forget(key);
+      }
+    }
   }
 
   private announceLocal(s: Session, on: boolean) {
-    const owner = s.beacon.ownerId;
+    const owner = s.ownerId;
     if (owner === currentUserId()) return;
     if (!announceStream(owner, s.channelId, on)) {
       logger.warn(`no voice state for ${owner}, cannot show native live badge`);
@@ -123,7 +144,7 @@ class Watcher {
   }
 
   ownsUser(userId: string) {
-    for (const [, s] of this.sessions) if (s.beacon.ownerId === userId) return true;
+    for (const [, s] of this.sessions) if (s.ownerId === userId) return true;
     return false;
   }
 
@@ -133,7 +154,7 @@ class Watcher {
   }
 
   streamForOwner(userId: string) {
-    for (const [, s] of this.sessions) if (s.beacon.ownerId === userId) return s.stream ?? null;
+    for (const [, s] of this.sessions) if (s.ownerId === userId) return s.stream ?? null;
     return null;
   }
 
@@ -152,23 +173,24 @@ class Watcher {
           stop();
           reject(new Error("broadcaster did not answer"));
         }, 30000);
-        const stop = watchAnswers(session.channelId, session.beacon.sessionId, (h, msgId) => {
-          if (h.from !== session.beacon.ownerId) return;
-          deleteMessage(session.channelId, msgId);
+        const stop = watchAnswers(session.channelId, () => session.offerMessageId ?? null, (h, msg) => {
+          if (msg.author?.id !== session.ownerId || h.s !== session.beacon.sessionId) return;
           clearTimeout(timer);
           stop();
           resolve(h.sdp);
         });
       });
 
-      await sendOffer(session.channelId, {
-        s: session.beacon.sessionId,
-        from: currentUserId(),
-        to: session.beacon.ownerId,
-        sdp
-      });
+      session.offerMessageId = await sendOffer(
+        session.channelId,
+        { s: session.beacon.sessionId, sdp },
+        session.messageId
+      );
 
-      await pc.setRemoteDescription({ type: "answer", sdp: await answered });
+      const answerSdp = await answered;
+      deleteOwn(session.channelId, session.offerMessageId);
+      session.offerMessageId = undefined;
+      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
       if (!(await waitConnected(pc))) {
         throw new Error("no direct route to broadcaster - run __p2p.nat() on both peers");
@@ -178,11 +200,13 @@ class Watcher {
 
       await ready;
       if (session.stream) refreshAttached(session.stream);
-      announceVideo(session.beacon.ownerId, session.channelId, true);
+      announceVideo(session.ownerId, session.channelId, true);
       logger.info(`watching ${key} tracks=${session.stream?.getTracks().map(t => t.kind).join("+")}`);
     } catch (e) {
       session.pc?.close();
       session.pc = undefined;
+      deleteOwn(session.channelId, session.offerMessageId);
+      session.offerMessageId = undefined;
       throw e;
     } finally {
       session.joining = false;

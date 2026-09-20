@@ -6,8 +6,8 @@ import { Toasts } from "@webpack/common";
 import { parseStreamKey, streamKey } from "./core/session";
 import { broadcast } from "./broadcast";
 import { attachToAllVideos, describeQuality, diag, findModules, nat, voice } from "./diag";
-import { currentUserId, dispatch, ownerOfVideoId, readVoiceStatus, voiceChannelId } from "./discord";
-import { currentBeacon } from "./signaling";
+import { currentUserId, dispatch, ownerOfVideoId, voiceChannelId } from "./discord";
+import { scanBeacons } from "./signaling";
 import { IceConfig } from "./peers";
 import {
   browserVideoSourcePatch, qualityChangePatch, qualityLabelPatch, streamStartPatch,
@@ -81,8 +81,7 @@ export default definePlugin({
       findModules,
       voice,
       nat: () => nat(ice().stun),
-      status: (channelId?: string) => readVoiceStatus(channelId ?? voiceChannelId()!),
-      beacon: (channelId?: string) => currentBeacon(channelId ?? voiceChannelId()!),
+      beacons: (channelId?: string) => scanBeacons(channelId ?? voiceChannelId()!),
       voiceChannelId
     };
 

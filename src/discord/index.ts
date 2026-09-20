@@ -1,16 +1,20 @@
 import { Logger } from "@utils/Logger";
 import { findByCodeLazy, findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
-import { ChannelStore, Constants, FluxDispatcher, RestAPI, SelectedChannelStore, UserStore } from "@webpack/common";
+import {
+  ChannelStore, Constants, FluxDispatcher, LocaleStore, RestAPI, SelectedChannelStore, UserStore
+} from "@webpack/common";
 
 const announceLogger = new Logger("P2PShare:announce");
 
 export const ApplicationStreamingStore = findStoreLazy("ApplicationStreamingStore");
 export const VoiceStateStore = findStoreLazy("VoiceStateStore");
-export const ChannelStatusStore = findStoreLazy("ChannelStatusStore");
 export const StreamingSettingsStore = findStoreLazy("ApplicationStreamingSettingsStore");
 
-export const SocketHolder = findByPropsLazy("getSocket");
 export const CloudUpload: any = findLazy((m: any) => m.prototype?.trackUploadFinished);
+
+export function locale(): string | undefined {
+  return LocaleStore?.locale;
+}
 
 export function currentUserId(): string {
   return UserStore.getCurrentUser()?.id ?? "";
@@ -84,13 +88,6 @@ export function guildIdOf(channelId: string | null) {
   return ch?.guild_id ?? null;
 }
 
-export async function setVoiceStatus(channelId: string, status: string | null) {
-  return RestAPI.put({
-    url: `/channels/${channelId}/voice-status`,
-    body: { status: status === "" ? null : status }
-  });
-}
-
 export function streamQuality() {
   const state = StreamingSettingsStore.getState?.() ?? {};
   const resolution = Number(state.resolution);
@@ -99,20 +96,6 @@ export function streamQuality() {
     height: Number.isFinite(resolution) && resolution > 0 ? resolution : 1080,
     fps: Number.isFinite(fps) && fps > 0 ? fps : 30
   };
-}
-
-export function requestChannelInfo(channelId: string) {
-  const guildId = guildIdOf(channelId);
-  if (!guildId) return false;
-  try {
-    const socket = SocketHolder.getSocket?.();
-    socket?.requestChannelInfo?.(guildId, ["status", "voice_start_time"]);
-    announceLogger.info(`requested channel info for guild ${guildId}`);
-    return true;
-  } catch (e) {
-    announceLogger.warn("requestChannelInfo failed", e);
-    return false;
-  }
 }
 
 export function refreshAttached(stream: MediaStream) {
@@ -128,13 +111,43 @@ export function refreshAttached(stream: MediaStream) {
   return n;
 }
 
-export function readVoiceStatus(channelId: string): string | null {
-  const ch = channelOf(channelId);
-  if (!ch) return null;
-  return ChannelStatusStore.getChannelStatus(ch) ?? null;
+const NO_MENTIONS = { parse: [] as string[], replied_user: false };
+
+function replyTo(channelId: string, messageId?: string) {
+  if (!messageId) return undefined;
+  return { message_id: messageId, channel_id: channelId, fail_if_not_exists: false };
 }
 
-export function uploadText(channelId: string, filename: string, text: string) {
+export async function postMessage(channelId: string, content: string) {
+  const res = await RestAPI.post({
+    url: Constants.Endpoints.MESSAGES(channelId),
+    body: {
+      content,
+      channel_id: channelId,
+      type: 0,
+      nonce: String(Date.now()),
+      allowed_mentions: NO_MENTIONS
+    }
+  });
+  return res.body?.id as string;
+}
+
+export async function editMessage(channelId: string, messageId: string, content: string) {
+  return RestAPI.patch({
+    url: Constants.Endpoints.MESSAGE(channelId, messageId),
+    body: { content, allowed_mentions: NO_MENTIONS }
+  });
+}
+
+export async function recentMessages(channelId: string, limit = 50) {
+  const res = await RestAPI.get({
+    url: Constants.Endpoints.MESSAGES(channelId),
+    query: { limit }
+  });
+  return (res.body ?? []) as any[];
+}
+
+export function uploadText(channelId: string, filename: string, text: string, replyToId?: string) {
   return new Promise<string>((resolve, reject) => {
     const upload = new CloudUpload({
       file: new File([text], filename, { type: "text/plain" }),
@@ -150,10 +163,11 @@ export function uploadText(channelId: string, filename: string, text: string) {
             content: "",
             channel_id: channelId,
             type: 0,
-            flags: 1 << 12,
             nonce: String(Date.now()),
             sticker_ids: [],
-            attachments: [{ id: "0", filename: upload.filename, uploaded_filename: upload.uploadedFilename }]
+            attachments: [{ id: "0", filename: upload.filename, uploaded_filename: upload.uploadedFilename }],
+            allowed_mentions: NO_MENTIONS,
+            message_reference: replyTo(channelId, replyToId)
           }
         });
         resolve(res.body?.id);

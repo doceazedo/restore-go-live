@@ -1,8 +1,8 @@
 import { broadcast } from "./broadcast";
 import {
-  ApplicationStreamingStore, currentUserId, guildIdOf, readVoiceStatus, voiceChannelId, VoiceStateStore
+  ApplicationStreamingStore, currentUserId, guildIdOf, voiceChannelId, VoiceStateStore
 } from "./discord";
-import { currentBeacon } from "./signaling";
+import { scanBeacons } from "./signaling";
 import { watcher } from "./watch";
 
 function describeTrack(t: MediaStreamTrack) {
@@ -59,9 +59,8 @@ export async function diag() {
 
   const report = {
     voiceChannelId: vc,
-    voiceStatus: vc ? readVoiceStatus(vc) : null,
-    beacon: vc ? currentBeacon(vc) : null,
     broadcasting: broadcast.active,
+    beaconMessageId: broadcast.beaconMessageId,
     broadcastSession: broadcast.sessionId,
     broadcastAudio: broadcast.hasAudio,
     broadcastStream: describeStream(broadcast.stream),

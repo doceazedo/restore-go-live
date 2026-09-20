@@ -1,14 +1,17 @@
 import { Logger } from "@utils/Logger";
 
-import { Beacon } from "./core/beacon";
+import { Beacon, HEARTBEAT_MS } from "./core/beacon";
 import { newSessionId, streamKey } from "./core/session";
 import { captureScreen, hasLiveAudio } from "./capture";
 import {
-  addInterceptor, announceStream, announceVideo, currentUserId, deleteMessage, dispatch, guildIdOf,
+  addInterceptor, announceStream, announceVideo, currentUserId, dispatch, guildIdOf,
   streamQuality, subscribe
 } from "./discord";
 import { answerViewer, applyBitrate, IceConfig, selectedPair, waitConnected } from "./peers";
-import { clearBeacon, Handshake, publishBeacon, sendAnswer, watchOffers } from "./signaling";
+import {
+  cleanupOwnLeftovers, clearBeacon, deleteWhenPeerGone, Handshake, publishBeacon, refreshBeacon,
+  sendAnswer, watchOffers
+} from "./signaling";
 
 const logger = new Logger("P2PShare:broadcast");
 
@@ -29,6 +32,9 @@ class Broadcast {
   hasAudio = false;
   viewers = new Map<string, Viewer>();
   private stopOffers: (() => void) | null = null;
+  beaconMessageId: string | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private startedAt = 0;
   private stopHooks: Array<() => void> = [];
   private stopping = false;
   private opts: BroadcastOptions | null = null;
@@ -64,23 +70,22 @@ class Broadcast {
 
     capture.stream.getVideoTracks()[0]?.addEventListener("ended", () => void this.stop());
 
-    const beacon: Beacon = {
-      sessionId: this.sessionId,
-      ownerId: currentUserId(),
-      startedAt: Date.now(),
-      hasAudio: this.hasAudio
-    };
+    this.startedAt = Date.now();
+    await cleanupOwnLeftovers(channelId);
 
     try {
-      await publishBeacon(channelId, beacon);
+      this.beaconMessageId = await publishBeacon(channelId, this.beacon());
     } catch (e) {
       await this.teardownMedia();
-      throw new Error(`could not set voice channel status: ${(e as Error).message}`);
+      throw new Error(`could not post beacon: ${(e as Error).message}`);
     }
 
-    this.stopOffers = watchOffers(channelId, this.sessionId, (h, msgId) => {
-      deleteMessage(channelId, msgId);
-      this.onOffer(h).catch(err => logger.error("offer handling failed", err));
+    this.heartbeatTimer = setInterval(() => {
+      if (this.beaconMessageId) void refreshBeacon(this.channelId, this.beaconMessageId, this.beacon());
+    }, HEARTBEAT_MS);
+
+    this.stopOffers = watchOffers(channelId, () => this.beaconMessageId, (h, msg) => {
+      this.onOffer(h, msg).catch(err => logger.error("offer handling failed", err));
     });
 
     this.stopHooks.push(addInterceptor((action: any) => {
@@ -106,13 +111,26 @@ class Broadcast {
     logger.info(`live session=${this.sessionId} audio=${this.hasAudio} channel=${channelId}`);
   }
 
-  private async onOffer(h: Handshake) {
+  private beacon(): Beacon {
+    return {
+      sessionId: this.sessionId,
+      startedAt: this.startedAt,
+      heartbeat: Date.now(),
+      hasAudio: this.hasAudio
+    };
+  }
+
+  private async onOffer(h: Handshake, msg: any) {
     if (!this.stream || !this.opts) return;
+    if (h.s !== this.sessionId) return;
 
-    this.viewers.get(h.from)?.pc.close();
-    this.viewers.delete(h.from);
+    const viewerId: string = msg.author?.id;
+    if (!viewerId) return;
 
-    logger.info(`offer from ${h.from}: ${h.sdp.length} chars, m-lines=${(h.sdp.match(/^m=/gm) ?? []).length}`);
+    this.viewers.get(viewerId)?.pc.close();
+    this.viewers.delete(viewerId);
+
+    logger.info(`offer from ${viewerId}: ${h.sdp.length} chars`);
 
     let answered;
     try {
@@ -122,27 +140,23 @@ class Broadcast {
       throw e;
     }
     const { pc, sdp } = answered;
-    await sendAnswer(this.channelId, {
-      s: this.sessionId,
-      from: currentUserId(),
-      to: h.from,
-      sdp
-    });
+    const answerId = await sendAnswer(this.channelId, { s: this.sessionId, sdp }, msg.id);
+    if (answerId) deleteWhenPeerGone(this.channelId, answerId, msg.id);
 
     const ok = await waitConnected(pc);
     if (!ok) {
-      logger.warn(`viewer ${h.from} never connected`);
+      logger.warn(`viewer ${viewerId} never connected`);
       pc.close();
       return;
     }
 
-    this.viewers.set(h.from, { pc });
+    this.viewers.set(viewerId, { pc });
     await this.rebalance();
-    logger.info(`viewer ${h.from} connected via ${await selectedPair(pc)} total=${this.viewers.size}`);
+    logger.info(`viewer ${viewerId} connected via ${await selectedPair(pc)} total=${this.viewers.size}`);
 
     pc.addEventListener("connectionstatechange", () => {
       if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-        this.viewers.delete(h.from);
+        this.viewers.delete(viewerId);
         void this.rebalance();
       }
     });
@@ -209,7 +223,10 @@ class Broadcast {
     this.viewers.clear();
     await this.teardownMedia();
     this.announceSelf(false);
-    await clearBeacon(this.channelId);
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+    if (this.beaconMessageId) await clearBeacon(this.channelId, this.beaconMessageId);
+    this.beaconMessageId = null;
     this.sessionId = "";
     this.stopping = false;
     logger.info("broadcast stopped");
