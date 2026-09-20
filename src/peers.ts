@@ -1,23 +1,36 @@
+import { Logger } from "@utils/Logger";
+
 import { perPeerBitrate } from "./core/bitrate";
+
+const logger = new Logger("P2PShare:ice");
 
 export interface IceConfig {
   stun: string[];
-  turnUrl?: string;
-  turnUsername?: string;
-  turnCredential?: string;
-}
-
-export function iceServers(cfg: IceConfig): RTCIceServer[] {
-  const servers: RTCIceServer[] = [];
-  if (cfg.stun.length) servers.push({ urls: cfg.stun });
-  if (cfg.turnUrl && cfg.turnUsername && cfg.turnCredential) {
-    servers.push({ urls: cfg.turnUrl, username: cfg.turnUsername, credential: cfg.turnCredential });
-  }
-  return servers;
 }
 
 export function newConnection(cfg: IceConfig) {
-  return new RTCPeerConnection({ iceServers: iceServers(cfg), bundlePolicy: "max-bundle" });
+  const pc = new RTCPeerConnection({
+    iceServers: cfg.stun.length ? [{ urls: cfg.stun }] : [],
+    bundlePolicy: "max-bundle"
+  });
+  pc.addEventListener("icecandidateerror", (e: any) => {
+    if (e.errorCode !== 701) logger.warn(`ICE error ${e.errorCode} ${e.errorText} (${e.url})`);
+  });
+  return pc;
+}
+
+export async function selectedPair(pc: RTCPeerConnection) {
+  const stats = await pc.getStats();
+  const byId = new Map<string, any>();
+  stats.forEach(r => byId.set(r.id, r));
+  let out = "unknown";
+  stats.forEach(r => {
+    if (r.type !== "candidate-pair" || r.state !== "succeeded") return;
+    const local = byId.get(r.localCandidateId);
+    const remote = byId.get(r.remoteCandidateId);
+    if (local && remote) out = `${local.candidateType}/${local.protocol} -> ${remote.candidateType}`;
+  });
+  return out;
 }
 
 export async function gatherComplete(pc: RTCPeerConnection, timeoutMs = 4000) {
@@ -34,8 +47,8 @@ export async function gatherComplete(pc: RTCPeerConnection, timeoutMs = 4000) {
   });
 }
 
-export async function applyBitrate(pc: RTCPeerConnection, budgetMbps: number, viewers: number, relayed: boolean) {
-  const maxBitrate = perPeerBitrate(budgetMbps, viewers, relayed);
+export async function applyBitrate(pc: RTCPeerConnection, budgetMbps: number, viewers: number) {
+  const maxBitrate = perPeerBitrate(budgetMbps, viewers);
   for (const sender of pc.getSenders()) {
     if (sender.track?.kind !== "video") continue;
     const params = sender.getParameters();
@@ -45,21 +58,6 @@ export async function applyBitrate(pc: RTCPeerConnection, budgetMbps: number, vi
     await sender.setParameters(params).catch(() => undefined);
   }
   return maxBitrate;
-}
-
-export async function isRelayed(pc: RTCPeerConnection) {
-  const stats = await pc.getStats();
-  let relayed = false;
-  const locals = new Map<string, any>();
-  stats.forEach(r => {
-    if (r.type === "local-candidate") locals.set(r.id, r);
-  });
-  stats.forEach(r => {
-    if (r.type === "candidate-pair" && r.state === "succeeded" && r.nominated !== false) {
-      if (locals.get(r.localCandidateId)?.candidateType === "relay") relayed = true;
-    }
-  });
-  return relayed;
 }
 
 export function waitConnected(pc: RTCPeerConnection, timeoutMs = 30000) {

@@ -20,8 +20,8 @@ export interface Handshake {
   sdp: string;
 }
 
-export async function publishBeacon(channelId: string, beacon: Beacon, label: string) {
-  const text = encodeBeacon(beacon, label);
+export async function publishBeacon(channelId: string, beacon: Beacon) {
+  const text = encodeBeacon(beacon);
   logger.info(`publishing beacon to ${channelId} (${text.length} chars): ${text}`);
   await setVoiceStatus(channelId, text);
 }

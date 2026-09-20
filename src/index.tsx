@@ -5,7 +5,7 @@ import { Toasts } from "@webpack/common";
 
 import { parseStreamKey, streamKey } from "./core/session";
 import { broadcast } from "./broadcast";
-import { attachToAllVideos, diag, findModules, voice } from "./diag";
+import { attachToAllVideos, diag, findModules, nat, voice } from "./diag";
 import { currentUserId, ownerOfVideoId, readVoiceStatus, voiceChannelId } from "./discord";
 import { currentBeacon } from "./signaling";
 import { IceConfig } from "./peers";
@@ -45,37 +45,20 @@ const settings = definePluginSettings({
   stunServers: {
     type: OptionType.STRING,
     description: "STUN servers, comma separated",
-    default: "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
+    default: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302",
+      "stun:stun.cloudflare.com:3478"
+    ].join(",")
   },
-  turnUrl: {
-    type: OptionType.STRING,
-    description: "TURN url (needed behind CGNAT / symmetric NAT)",
-    default: ""
-  },
-  turnUsername: {
-    type: OptionType.STRING,
-    description: "TURN username",
-    default: ""
-  },
-  turnCredential: {
-    type: OptionType.STRING,
-    description: "TURN credential",
-    default: ""
-  },
-  beaconLabel: {
-    type: OptionType.STRING,
-    description: "Text shown in the voice channel status while live",
-    default: "🔴 P2P"
-  }
 });
 
 function ice(): IceConfig {
-  return {
-    stun: settings.store.stunServers.split(",").map(s => s.trim()).filter(Boolean),
-    turnUrl: settings.store.turnUrl || undefined,
-    turnUsername: settings.store.turnUsername || undefined,
-    turnCredential: settings.store.turnCredential || undefined
-  };
+  return { stun: parseUrls(settings.store.stunServers) };
+}
+
+function parseUrls(raw: string) {
+  return raw.split(",").map(s => s.trim()).filter(Boolean);
 }
 
 function toast(message: string, type: string = Toasts.Type.MESSAGE) {
@@ -110,6 +93,7 @@ export default definePlugin({
       attach: attachToAllVideos,
       findModules,
       voice,
+      nat: () => nat(ice().stun),
       status: (channelId?: string) => readVoiceStatus(channelId ?? voiceChannelId()!),
       beacon: (channelId?: string) => currentBeacon(channelId ?? voiceChannelId()!),
       voiceChannelId
@@ -136,8 +120,7 @@ export default definePlugin({
       ice: ice(),
       fps: settings.store.frameRate,
       height: settings.store.height,
-      budgetMbps: settings.store.uploadBudgetMbps,
-      label: settings.store.beaconLabel
+      budgetMbps: settings.store.uploadBudgetMbps
     }).then(() => {
       toast(broadcast.hasAudio ? "P2P stream live (with audio)" : "P2P stream live (no desktop audio)");
     }).catch(e => {

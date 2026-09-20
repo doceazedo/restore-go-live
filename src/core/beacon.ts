@@ -1,7 +1,7 @@
 import { decode64, encode64, Reader, Writer } from "./codec";
 
+export const LABEL = "🔴 P2P";
 export const SEP = "·";
-export const LEGACY_SEP = "⁣";
 export const MAX_STATUS = 500;
 export const BEACON_TTL_MS = 6 * 60 * 60 * 1000;
 export const VERSION = 1;
@@ -13,14 +13,14 @@ export interface Beacon {
   hasAudio: boolean;
 }
 
-export function encodeBeacon(b: Beacon, label: string) {
+export function encodeBeacon(b: Beacon) {
   const w = new Writer();
   w.u8(VERSION);
   w.str(b.sessionId);
   w.str(b.ownerId);
   w.u48(b.startedAt);
   w.u8(b.hasAudio ? 1 : 0);
-  const text = `${label}${SEP}${encode64(w.finish())}`;
+  const text = `${LABEL}${SEP}${encode64(w.finish())}`;
   if (text.length > MAX_STATUS) throw new Error(`beacon too large: ${text.length}`);
   return text;
 }
@@ -47,12 +47,10 @@ function readBeacon(blob: string): Beacon | null {
 export function decodeBeacon(status: string | null | undefined): Beacon | null {
   if (!status) return null;
 
-  for (const sep of [SEP, LEGACY_SEP]) {
-    const idx = status.lastIndexOf(sep);
-    if (idx >= 0) {
-      const found = readBeacon(status.slice(idx + sep.length));
-      if (found) return found;
-    }
+  const idx = status.lastIndexOf(SEP);
+  if (idx >= 0) {
+    const found = readBeacon(status.slice(idx + SEP.length));
+    if (found) return found;
   }
 
   const tail = [...status].slice(-MAX_STATUS).join("");

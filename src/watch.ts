@@ -6,7 +6,7 @@ import {
   addInterceptor, announceStream, announceVideo, currentUserId, deleteMessage, dispatch, guildIdOf,
   refreshAttached, requestChannelInfo, subscribe, voiceChannelId
 } from "./discord";
-import { createViewerOffer, IceConfig, waitConnected } from "./peers";
+import { createViewerOffer, IceConfig, selectedPair, waitConnected } from "./peers";
 import { currentBeacon, sendOffer, watchAnswers, watchBeacons } from "./signaling";
 
 const logger = new Logger("P2PShare:watch");
@@ -175,8 +175,10 @@ class Watcher {
       await pc.setRemoteDescription({ type: "answer", sdp: await answered });
 
       if (!(await waitConnected(pc))) {
-        throw new Error("no route to broadcaster (symmetric NAT or CGNAT without TURN)");
+        throw new Error("no direct route to broadcaster - run __p2p.nat() on both peers");
       }
+
+      logger.info(`connected via ${await selectedPair(pc)}`);
 
       await ready;
       const attached = session.stream ? refreshAttached(session.stream) : 0;

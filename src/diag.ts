@@ -67,7 +67,6 @@ export async function diag() {
     broadcastStream: describeStream(broadcast.stream),
     viewers: [...broadcast.viewers.entries()].map(([id, v]) => ({
       id,
-      relayed: v.relayed,
       connection: v.pc.connectionState,
       ice: v.pc.iceConnectionState
     })),
@@ -77,6 +76,60 @@ export async function diag() {
   };
 
   console.log("=== P2P DIAG ===\n" + JSON.stringify(report, null, 2));
+  return report;
+}
+
+export async function nat(stunUrls: string[]) {
+  const probe = async (urls: string[]) => {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls }] });
+    pc.createDataChannel("probe");
+    const cands: RTCIceCandidate[] = [];
+    pc.addEventListener("icecandidate", e => e.candidate && cands.push(e.candidate));
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise(r => setTimeout(r, 5000));
+    pc.close();
+    return cands;
+  };
+
+  const all = await probe(stunUrls);
+  const parse = (c: RTCIceCandidate) => ({
+    type: c.type,
+    v6: (c.address ?? "").includes(":"),
+    address: c.address,
+    port: c.port,
+    related: c.relatedPort
+  });
+  const parsed = all.map(parse);
+
+  const hostV6 = parsed.filter(c => c.type === "host" && c.v6 && !/^fe80:/i.test(c.address ?? ""));
+  const srflx = parsed.filter(c => c.type === "srflx");
+  const srflxPorts = new Set(srflx.map(c => c.port));
+
+  const symmetric = srflx.length > 1 && srflxPorts.size > 1;
+
+  const verdict = hostV6.length
+    ? "IPv6 available - direct connection should work even behind CGNAT"
+    : symmetric
+      ? "symmetric NAT and no IPv6 - this peer cannot connect directly"
+      : srflx.length
+        ? "cone NAT with no IPv6 - direct connection usually works"
+        : "no public candidates found - check network";
+
+  const report = {
+    globalIPv6: hostV6.map(c => c.address),
+    publicIPv4: [...new Set(srflx.filter(c => !c.v6).map(c => c.address))],
+    srflxPorts: [...srflxPorts],
+    symmetricNat: symmetric,
+    candidateTypes: parsed.reduce((acc: any, c) => {
+      const k = `${c.type}${c.v6 ? "-v6" : "-v4"}`;
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    }, {}),
+    verdict
+  };
+
+  console.log("=== P2P NAT ===\n" + JSON.stringify(report, null, 2));
+  console.log(verdict);
   return report;
 }
 

@@ -7,7 +7,7 @@ import {
   addInterceptor, announceStream, announceVideo, currentUserId, deleteMessage, dispatch, guildIdOf,
   subscribe
 } from "./discord";
-import { answerViewer, applyBitrate, IceConfig, isRelayed, waitConnected } from "./peers";
+import { answerViewer, applyBitrate, IceConfig, selectedPair, waitConnected } from "./peers";
 import { clearBeacon, Handshake, publishBeacon, sendAnswer, watchOffers } from "./signaling";
 
 const logger = new Logger("P2PShare:broadcast");
@@ -17,12 +17,10 @@ export interface BroadcastOptions {
   fps: number;
   height: number;
   budgetMbps: number;
-  label: string;
 }
 
 interface Viewer {
   pc: RTCPeerConnection;
-  relayed: boolean;
 }
 
 class Broadcast {
@@ -74,7 +72,7 @@ class Broadcast {
     };
 
     try {
-      await publishBeacon(channelId, beacon, opts.label);
+      await publishBeacon(channelId, beacon);
     } catch (e) {
       await this.teardownMedia();
       throw new Error(`could not set voice channel status: ${(e as Error).message}`);
@@ -134,10 +132,9 @@ class Broadcast {
       return;
     }
 
-    const relayed = await isRelayed(pc);
-    this.viewers.set(h.from, { pc, relayed });
+    this.viewers.set(h.from, { pc });
     await this.rebalance();
-    logger.info(`viewer ${h.from} connected relayed=${relayed} total=${this.viewers.size}`);
+    logger.info(`viewer ${h.from} connected via ${await selectedPair(pc)} total=${this.viewers.size}`);
 
     pc.addEventListener("connectionstatechange", () => {
       if (pc.connectionState === "failed" || pc.connectionState === "closed") {
@@ -171,7 +168,7 @@ class Broadcast {
   private async rebalance() {
     if (!this.opts) return;
     for (const [, v] of this.viewers) {
-      await applyBitrate(v.pc, this.opts.budgetMbps, this.viewers.size, v.relayed);
+      await applyBitrate(v.pc, this.opts.budgetMbps, this.viewers.size);
     }
   }
 
