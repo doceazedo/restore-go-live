@@ -14,6 +14,8 @@ const DIST = join(ROOT, "Vencord", "dist");
 const OUT = join(ROOT, "release");
 
 const DESKTOP = ["patcher.js", "preload.js", "renderer.js", "renderer.css"];
+const BROWSER = ["extension-chrome.zip", "extension-firefox.zip"];
+
 const VESKTOP = [
   "vencordDesktopMain.js",
   "vencordDesktopPreload.js",
@@ -26,10 +28,17 @@ if (!existsSync(join(DIST, "patcher.js"))) {
   process.exit(1);
 }
 
+for (const zip of BROWSER) {
+  if (!existsSync(join(DIST, zip))) {
+    console.error(`${zip} is missing, run pnpm buildWeb first`);
+    process.exit(1);
+  }
+}
+
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
-for (const file of [...DESKTOP, ...VESKTOP]) {
+for (const file of [...DESKTOP, ...VESKTOP, ...BROWSER]) {
   const from = join(DIST, file);
   if (existsSync(from)) cpSync(from, join(OUT, file));
 }

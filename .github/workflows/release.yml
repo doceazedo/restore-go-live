@@ -34,8 +34,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build
+      - name: Build desktop
         run: pnpm build
+
+      - name: Build browser extensions
+        run: pnpm buildWeb
 
       - name: Package release
         run: node scripts/package-release.mjs
