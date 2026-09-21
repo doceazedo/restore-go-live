@@ -13,6 +13,7 @@ import {
   diag,
   findModules,
   nat,
+  selftest,
   voice,
 } from "./diag";
 import {
@@ -113,6 +114,7 @@ export default definePlugin({
       voice,
       nat: () => nat(ice().stun),
       audio: audioDevices,
+      selftest,
       beacons: (channelId?: string) =>
         scanBeacons(channelId ?? voiceChannelId()!),
       sources: () => (IS_DISCORD_DESKTOP ? Native.listSources() : null),

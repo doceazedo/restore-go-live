@@ -32,6 +32,27 @@ import {
 
 const logger = new Logger("P2PShare:watch");
 
+export async function attachAudio(track: MediaStreamTrack, label: string) {
+  const el = new Audio();
+  el.autoplay = true;
+  el.srcObject = new MediaStream([track]);
+
+  const sink = outputDeviceId();
+  if (sink && typeof (el as any).setSinkId === "function") {
+    await (el as any)
+      .setSinkId(sink)
+      .catch((e: unknown) => logger.warn("could not route stream audio to the discord output device", e));
+  }
+
+  try {
+    await el.play();
+    logger.info(`playing stream audio from ${label}`);
+  } catch (e) {
+    logger.warn("stream audio could not start", e);
+  }
+  return el;
+}
+
 interface Session {
   beacon: Beacon;
   ownerId: string;
@@ -176,24 +197,8 @@ class Watcher {
   }
 
   private async playAudio(session: Session, track: MediaStreamTrack) {
-    const el = session.audio ?? new Audio();
-    el.autoplay = true;
-    el.srcObject = new MediaStream([track]);
-    session.audio = el;
-
-    const sink = outputDeviceId();
-    if (sink && typeof (el as any).setSinkId === "function") {
-      await (el as any)
-        .setSinkId(sink)
-        .catch((e: unknown) => logger.warn("could not route stream audio to the discord output device", e));
-    }
-
-    try {
-      await el.play();
-      logger.info(`playing stream audio from ${session.ownerId}`);
-    } catch (e) {
-      logger.warn("stream audio could not start", e);
-    }
+    this.stopAudio(session);
+    session.audio = await attachAudio(track, session.ownerId);
   }
 
   private stopAudio(session: Session) {

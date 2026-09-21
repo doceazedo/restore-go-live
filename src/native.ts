@@ -8,10 +8,12 @@ export interface SourceInfo {
   display_id?: string;
 }
 
+export type SourceRoute = "listed" | "fallback" | "none";
+
 export interface PinnedSource {
   ok: boolean;
   wanted: string | null;
-  matched?: boolean;
+  route?: SourceRoute;
   resolved?: string | null;
   name?: string | null;
   candidates?: SourceInfo[];
@@ -36,8 +38,14 @@ function allSources() {
   });
 }
 
-async function resolveSource(id: string | null): Promise<DesktopCapturerSource | null> {
-  return matchSource(await allSources(), id);
+async function resolveSource(id: string | null) {
+  const sources = await allSources();
+
+  const listed = id ? sources.find(s => sameSource(s, id)) : null;
+  if (listed) return { source: listed, route: "listed" as SourceRoute, sources };
+
+  const fallback = matchSource(sources, null);
+  return { source: fallback, route: (fallback ? "fallback" : "none") as SourceRoute, sources };
 }
 
 export async function enableLoopbackAudio(_: IpcMainInvokeEvent) {
@@ -49,7 +57,7 @@ export async function enableLoopbackAudio(_: IpcMainInvokeEvent) {
     session.defaultSession.setDisplayMediaRequestHandler(
       (_request, callback) => {
         resolveSource(preferred)
-          .then(source => callback({
+          .then(({ source }) => callback({
             video: source ?? undefined,
             audio: loopbackSupported() ? "loopback" : undefined,
             enableLocalEcho: false
@@ -81,16 +89,14 @@ export async function preferSource(_: IpcMainInvokeEvent, id: string | null): Pr
   if (!installed) return { ok: false, error: "display media handler not installed", wanted: preferred };
 
   try {
-    const sources = await allSources();
-    const source = matchSource(sources, preferred);
-    const matched = !preferred || (!!source && sameSource(source, preferred));
+    const { source, route, sources } = await resolveSource(preferred);
     return {
       ok: true,
       wanted: preferred,
-      matched,
+      route,
       resolved: source?.id ?? null,
       name: source?.name ?? null,
-      candidates: matched ? undefined : describe(sources)
+      candidates: route === "fallback" ? describe(sources) : undefined
     };
   } catch (e: any) {
     return { ok: false, error: String(e?.message ?? e), wanted: preferred };

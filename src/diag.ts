@@ -94,6 +94,108 @@ export async function diag() {
   return report;
 }
 
+async function pipeToSelf(source: MediaStream) {
+  const send = new RTCPeerConnection();
+  const recv = new RTCPeerConnection();
+  send.onicecandidate = (e) => e.candidate && recv.addIceCandidate(e.candidate);
+  recv.onicecandidate = (e) => e.candidate && send.addIceCandidate(e.candidate);
+
+  const want = source.getTracks().length;
+  const got = new MediaStream();
+  const ready = new Promise<void>((resolve) => {
+    let seen = 0;
+    recv.ontrack = (e) => {
+      got.addTrack(e.track);
+      if (++seen >= want) resolve();
+    };
+  });
+
+  for (const track of source.getTracks()) send.addTrack(track, source);
+  await send.setLocalDescription(await send.createOffer());
+  await recv.setRemoteDescription(send.localDescription!);
+  await recv.setLocalDescription(await recv.createAnswer());
+  await send.setRemoteDescription(recv.localDescription!);
+
+  const timeout = new Promise<void>((r) => setTimeout(r, 10000));
+  await Promise.race([ready, timeout]);
+  return { send, recv, got };
+}
+
+async function inboundStats(pc: RTCPeerConnection) {
+  const stats = await pc.getStats();
+  const out: any = {};
+  stats.forEach((r: any) => {
+    if (r.type !== "inbound-rtp") return;
+    out[r.kind] = {
+      bytesReceived: r.bytesReceived,
+      packetsReceived: r.packetsReceived,
+      framesDecoded: r.framesDecoded,
+      frameWidth: r.frameWidth,
+      frameHeight: r.frameHeight,
+    };
+  });
+  return out;
+}
+
+export async function selftest(opts: { listen?: boolean; seconds?: number } = {}) {
+  const { measureLevel } = await import("./audio");
+  const { attachAudio } = await import("./watch");
+
+  const source = broadcast.stream;
+  if (!source) return "go live first, then run __p2p.selftest()";
+
+  const seconds = opts.seconds ?? 5;
+  const sent = source.getAudioTracks()[0] ?? null;
+  const { send, recv, got } = await pipeToSelf(source);
+
+  const received = got.getAudioTracks()[0] ?? null;
+  let player: HTMLAudioElement | null = null;
+  if (received) {
+    if (opts.listen) {
+      player = await attachAudio(received, "selftest");
+    } else {
+      player = new Audio();
+      player.muted = true;
+      player.srcObject = new MediaStream([received]);
+      await player.play().catch(() => undefined);
+    }
+  }
+
+  const [capturedLevel, receivedLevel] = await Promise.all([
+    sent ? measureLevel(sent, seconds * 1000) : Promise.resolve(0),
+    received ? measureLevel(received, seconds * 1000) : Promise.resolve(0),
+  ]);
+
+  const stats = await inboundStats(recv);
+
+  if (player) {
+    player.pause();
+    player.srcObject = null;
+  }
+  for (const track of got.getTracks()) track.stop();
+  send.close();
+  recv.close();
+
+  const report = {
+    captureAudioTrack: sent ? describeTrack(sent) : null,
+    capturedLevel: Number(capturedLevel.toFixed(3)),
+    receivedAudioTrack: received ? describeTrack(received) : null,
+    receivedLevel: Number(receivedLevel.toFixed(3)),
+    inbound: stats,
+    verdict: !sent
+      ? "nothing was captured, the broadcaster has no audio track"
+      : capturedLevel < 0.01
+        ? "the captured track is silent, play something audible and retry"
+        : receivedLevel < 0.01
+          ? "audio was captured but did not survive the peer connection"
+          : "audio captured and received, viewers should hear this",
+  };
+
+  console.log("=== P2P SELFTEST ===\n" + JSON.stringify(report, null, 2));
+  console.log(report.verdict);
+  return report;
+}
+
 export async function audioDevices() {
   const { listInputs, pickLoopback } = await import("./audio");
   const { platform } = await import("./capture");

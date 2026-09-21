@@ -2,7 +2,7 @@ import { Logger } from "@utils/Logger";
 
 import { hasSignal, loopbackTrack } from "./audio";
 import { Native } from "./bridge";
-import { electronSourceId, matchSource, sameSource } from "./core/sources";
+import { electronSourceId, matchSource, sameSource, sourceParts } from "./core/sources";
 import { GoLiveSource } from "./source";
 
 const logger = new Logger("P2PShare:capture");
@@ -40,22 +40,47 @@ function displayMedia(fps: number, height: number, wantAudio: boolean) {
   } as DisplayMediaStreamOptions);
 }
 
+const SURFACE: Record<string, string> = { window: "window", screen: "monitor" };
+
+function surfaceOf(stream: MediaStream) {
+  const settings: any = stream.getVideoTracks()[0]?.getSettings?.() ?? {};
+  return settings.displaySurface as string | undefined;
+}
+
+function wrongSurface(stream: MediaStream, sourceId: string | null) {
+  if (!sourceId) return false;
+  const want = SURFACE[sourceParts(sourceId).type];
+  const got = surfaceOf(stream);
+  if (!want || !got) return false;
+  return got !== want;
+}
+
+function stop(stream: MediaStream) {
+  stream.getTracks().forEach(t => t.stop());
+}
+
 const viaDisplayMedia: Attempt = async (fps, height, wantAudio, sourceId) => {
   try {
     if (IS_DISCORD_DESKTOP) {
       const pinned = await Native.preferSource(sourceId);
       if (!pinned?.ok) {
         logger.warn("could not pin the capture source", pinned);
-      } else if (sourceId && !pinned.matched) {
+      } else if (sourceId && pinned.route === "fallback") {
         const seen = (pinned.candidates ?? []).map(c => `${c.id} "${c.name}"`).join(", ");
         logger.warn(`main process has no source for ${sourceId}, it offered: ${seen}`);
         return null;
       } else {
-        logger.info(`main process matched ${sourceId ?? "nothing"} to ${pinned.resolved} (${pinned.name})`);
+        logger.info(`main process will capture ${pinned.resolved} (${pinned.route})`);
       }
     }
 
-    return { stream: await displayMedia(fps, height, wantAudio), via: "getDisplayMedia" };
+    const stream = await displayMedia(fps, height, wantAudio);
+    if (wrongSurface(stream, sourceId)) {
+      logger.warn(`getDisplayMedia returned a ${surfaceOf(stream)} instead of ${sourceId}`);
+      stop(stream);
+      return null;
+    }
+    return { stream, via: "getDisplayMedia" };
   } catch (e) {
     logger.warn("getDisplayMedia failed", e);
     return null;
@@ -86,12 +111,19 @@ const viaDiscordNative: Attempt = async (fps, height, wantAudio, sourceId) => {
       }
     };
     const audio = { mandatory: { chromeMediaSource: "desktop" } };
+    const onScreen = sourceParts(id).type === "screen";
 
-    const stream = wantAudio
+    const stream = wantAudio && onScreen
       ? await navigator.mediaDevices
         .getUserMedia({ audio, video } as any)
         .catch(() => navigator.mediaDevices.getUserMedia({ video } as any))
       : await navigator.mediaDevices.getUserMedia({ video } as any);
+
+    if (wrongSurface(stream, sourceId)) {
+      logger.warn(`desktop capture returned a ${surfaceOf(stream)} instead of ${sourceId}`);
+      stop(stream);
+      return null;
+    }
 
     return { stream, via: "DiscordNative.desktopCapture" };
   } catch (e) {
@@ -103,6 +135,7 @@ const viaDiscordNative: Attempt = async (fps, height, wantAudio, sourceId) => {
 async function loopbackFromHandler() {
   if (!IS_DISCORD_DESKTOP) return null;
   try {
+    await Native.preferSource(null);
     const stream = await displayMedia(5, 240, true);
     const audio = stream.getAudioTracks()[0] ?? null;
     for (const track of stream.getVideoTracks()) {
@@ -141,8 +174,9 @@ async function resolveAudio(
     return { track, audioVia: via };
   }
 
-  const handler = track ? null : await loopbackFromHandler();
+  const handler = await loopbackFromHandler();
   if (handler) {
+    drop();
     stream.addTrack(handler);
     return { track: handler, audioVia: "loopback handler" };
   }
@@ -176,8 +210,11 @@ export async function captureScreen(
   for (const attempt of [viaDisplayMedia, viaDiscordNative]) {
     captured = await attempt(fps, height, wantAudio, source.id);
     if (captured?.stream.getVideoTracks().length) break;
-    captured?.stream.getTracks().forEach(t => t.stop());
+    if (captured) stop(captured.stream);
     captured = null;
+  }
+  if (!captured && source.id) {
+    throw new Error(`could not capture ${source.name ?? source.id}, nothing else was shared`);
   }
   if (!captured) throw new Error("no screen capture API available");
 

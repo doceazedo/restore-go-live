@@ -80,6 +80,35 @@ export async function hasSignal(track: MediaStreamTrack, ms = 1500) {
   }
 }
 
+export async function measureLevel(track: MediaStreamTrack, ms = 3000) {
+  if (track.readyState !== "live") return 0;
+
+  let ctx: AudioContext | null = null;
+  try {
+    ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(new MediaStream([track]));
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+
+    const data = new Uint8Array(analyser.fftSize);
+    const deadline = Date.now() + ms;
+    let peak = 0;
+
+    while (Date.now() < deadline) {
+      analyser.getByteTimeDomainData(data);
+      for (const v of data) peak = Math.max(peak, Math.abs(v - 128) / 128);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return peak;
+  } catch (e) {
+    logger.warn("could not measure audio level", e);
+    return 0;
+  } finally {
+    void ctx?.close();
+  }
+}
+
 export async function loopbackTrack(preference: string) {
   if (preference.trim().toLowerCase() === "off") return null;
 
