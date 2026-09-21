@@ -100,6 +100,20 @@ export function streamQuality() {
   };
 }
 
+export const STREAM_CONTEXT = "stream";
+
+export function streamAudioState(userId: string) {
+  try {
+    const volume = MediaEngineStore?.getLocalVolume?.(userId, STREAM_CONTEXT);
+    return {
+      muted: MediaEngineStore?.isLocalMute?.(userId, STREAM_CONTEXT) === true,
+      volume: typeof volume === "number" && Number.isFinite(volume) ? volume : 100
+    };
+  } catch {
+    return { muted: false, volume: 100 };
+  }
+}
+
 export function outputDeviceId(): string | null {
   try {
     const id = MediaEngineStore?.getOutputDeviceId?.();

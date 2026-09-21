@@ -11,6 +11,8 @@ import {
   guildIdOf,
   outputDeviceId,
   refreshAttached,
+  STREAM_CONTEXT,
+  streamAudioState,
   subscribe,
   voiceChannelId,
 } from "./discord";
@@ -32,10 +34,18 @@ import {
 
 const logger = new Logger("P2PShare:watch");
 
+export function applyAudioState(el: HTMLAudioElement, ownerId: string) {
+  const { muted, volume } = streamAudioState(ownerId);
+  el.muted = muted;
+  el.volume = Math.max(0, Math.min(volume / 100, 1));
+  return { muted, volume };
+}
+
 export async function attachAudio(track: MediaStreamTrack, label: string) {
   const el = new Audio();
   el.autoplay = true;
   el.srcObject = new MediaStream([track]);
+  applyAudioState(el, label);
 
   const sink = outputDeviceId();
   if (sink && typeof (el as any).setSinkId === "function") {
@@ -87,6 +97,15 @@ class Watcher {
       "CHANNEL_INFO",
     ]) {
       this.extra.push(subscribe(event, () => this.rescan()));
+    }
+
+    for (const event of ["AUDIO_TOGGLE_LOCAL_MUTE", "AUDIO_SET_LOCAL_VOLUME"]) {
+      this.extra.push(
+        subscribe(event, (action: any) => {
+          if (action?.context !== STREAM_CONTEXT) return;
+          setTimeout(() => this.applyAudioSettings(action?.userId), 0);
+        }),
+      );
     }
 
     this.extra.push(
@@ -194,6 +213,15 @@ class Watcher {
     logger.info(
       `announced selfStream=${on} for ${owner} videoStreamId=${videoStreamId}`,
     );
+  }
+
+  private applyAudioSettings(userId?: string) {
+    for (const [, session] of this.sessions) {
+      if (userId && session.ownerId !== userId) continue;
+      if (!session.audio) continue;
+      const { muted, volume } = applyAudioState(session.audio, session.ownerId);
+      logger.info(`${session.ownerId} stream audio muted=${muted} volume=${volume}`);
+    }
   }
 
   private async playAudio(session: Session, track: MediaStreamTrack) {
