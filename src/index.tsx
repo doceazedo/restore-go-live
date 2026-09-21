@@ -152,13 +152,6 @@ export default definePlugin({
         audioPreference: settings.store.desktopAudio,
         source: goLiveSource(opts),
       })
-      .then(() => {
-        toast(
-          broadcast.hasAudio
-            ? "P2P stream live with audio"
-            : "P2P stream live, no desktop audio",
-        );
-      })
       .catch((e) => {
         logger.error("failed to start", e);
         toast(`P2P stream failed: ${e.message}`, Toasts.Type.FAILURE);
