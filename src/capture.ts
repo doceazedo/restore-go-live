@@ -1,6 +1,7 @@
 import { Logger } from "@utils/Logger";
 
-import { hasSignal, loopbackTrack } from "./audio";
+import { appAudioTrack } from "./appaudio";
+import { loopbackTrack } from "./audio";
 import { Native } from "./bridge";
 import { electronSourceId, matchSource, sameSource, sourceParts } from "./core/sources";
 import { GoLiveSource } from "./source";
@@ -19,8 +20,8 @@ export interface CaptureResult {
 type Attempt = (
   fps: number,
   height: number,
-  wantAudio: boolean,
-  sourceId: string | null
+  sourceId: string | null,
+  wantAudio: boolean
 ) => Promise<{ stream: MediaStream; via: string } | null>;
 
 export function platform(): "win32" | "darwin" | "linux" | "web" {
@@ -33,10 +34,10 @@ export function platform(): "win32" | "darwin" | "linux" | "web" {
   return "web";
 }
 
-function displayMedia(fps: number, height: number, wantAudio: boolean) {
+function displayMedia(fps: number, height: number) {
   return navigator.mediaDevices.getDisplayMedia({
     video: { frameRate: fps, height: { ideal: height } },
-    audio: wantAudio
+    audio: false
   } as DisplayMediaStreamOptions);
 }
 
@@ -51,7 +52,11 @@ function wrongSurface(stream: MediaStream, sourceId: string | null) {
   if (!sourceId) return false;
   const want = SURFACE[sourceParts(sourceId).type];
   const got = surfaceOf(stream);
-  if (!want || !got) return false;
+  if (!want) return false;
+  if (!got) {
+    logger.info(`chromium did not report a surface for ${sourceId}, cannot verify what was captured`);
+    return false;
+  }
   return got !== want;
 }
 
@@ -59,7 +64,13 @@ function stop(stream: MediaStream) {
   stream.getTracks().forEach(t => t.stop());
 }
 
-const viaDisplayMedia: Attempt = async (fps, height, wantAudio, sourceId) => {
+function describeAudio(track: MediaStreamTrack) {
+  const settings: any = track.getSettings?.() ?? {};
+  const excluded = settings.restrictOwnAudio === true;
+  return `own audio ${excluded ? "excluded" : "included"} (${track.label || "unlabelled"})`;
+}
+
+const viaDisplayMedia: Attempt = async (fps, height, sourceId) => {
   try {
     if (IS_DISCORD_DESKTOP) {
       const pinned = await Native.preferSource(sourceId);
@@ -74,7 +85,7 @@ const viaDisplayMedia: Attempt = async (fps, height, wantAudio, sourceId) => {
       }
     }
 
-    const stream = await displayMedia(fps, height, wantAudio);
+    const stream = await displayMedia(fps, height);
     if (wrongSurface(stream, sourceId)) {
       logger.warn(`getDisplayMedia returned a ${surfaceOf(stream)} instead of ${sourceId}`);
       stop(stream);
@@ -87,7 +98,7 @@ const viaDisplayMedia: Attempt = async (fps, height, wantAudio, sourceId) => {
   }
 };
 
-const viaDiscordNative: Attempt = async (fps, height, wantAudio, sourceId) => {
+const viaDiscordNative: Attempt = async (fps, height, sourceId, wantAudio) => {
   try {
     const sources = await DiscordNative?.desktopCapture?.getDesktopCaptureSources?.({
       types: ["screen", "window"],
@@ -110,14 +121,7 @@ const viaDiscordNative: Attempt = async (fps, height, wantAudio, sourceId) => {
         maxHeight: height
       }
     };
-    const audio = { mandatory: { chromeMediaSource: "desktop" } };
-    const onScreen = sourceParts(id).type === "screen";
-
-    const stream = wantAudio && onScreen
-      ? await navigator.mediaDevices
-        .getUserMedia({ audio, video } as any)
-        .catch(() => navigator.mediaDevices.getUserMedia({ video } as any))
-      : await navigator.mediaDevices.getUserMedia({ video } as any);
+    const stream = await navigator.mediaDevices.getUserMedia({ video } as any);
 
     if (wrongSurface(stream, sourceId)) {
       logger.warn(`desktop capture returned a ${surfaceOf(stream)} instead of ${sourceId}`);
@@ -132,30 +136,11 @@ const viaDiscordNative: Attempt = async (fps, height, wantAudio, sourceId) => {
   }
 };
 
-async function loopbackFromHandler() {
-  if (!IS_DISCORD_DESKTOP) return null;
-  try {
-    await Native.preferSource(null);
-    const stream = await displayMedia(5, 240, true);
-    const audio = stream.getAudioTracks()[0] ?? null;
-    for (const track of stream.getVideoTracks()) {
-      stream.removeTrack(track);
-      track.stop();
-    }
-    if (!audio) return null;
-    logger.info("took desktop audio from a second capture");
-    return audio;
-  } catch (e) {
-    logger.warn("could not open a loopback audio stream", e);
-    return null;
-  }
-}
-
 async function resolveAudio(
   stream: MediaStream,
-  via: string,
   wantAudio: boolean,
-  audioPreference: string
+  audioPreference: string,
+  sourceId: string | null
 ) {
   const track: MediaStreamTrack | null = stream.getAudioTracks()[0] ?? null;
   const drop = () => {
@@ -169,31 +154,33 @@ async function resolveAudio(
     return { track: null, audioVia: "off" };
   }
 
-  const trusted = via === "getDisplayMedia";
-  if (track && track.readyState === "live" && (trusted || (await hasSignal(track)))) {
-    return { track, audioVia: via };
-  }
-
-  const handler = await loopbackFromHandler();
-  if (handler) {
+  const named = audioPreference.trim().toLowerCase() !== "auto";
+  if (named) {
     drop();
-    stream.addTrack(handler);
-    return { track: handler, audioVia: "loopback handler" };
-  }
-
-  const device = await loopbackTrack(audioPreference);
-  if (device) {
-    drop();
-    stream.addTrack(device);
-    return { track: device, audioVia: "loopback device" };
-  }
-
-  if (track && track.readyState === "live") {
-    logger.info("capture audio is silent so far, keeping it anyway");
-    return { track, audioVia: via };
+    const device = await loopbackTrack(audioPreference);
+    if (device) {
+      stream.addTrack(device);
+      return { track: device, audioVia: "loopback device" };
+    }
+    logger.warn(`no input device matched "${audioPreference}"`);
+    return { track: null, audioVia: "none" };
   }
 
   drop();
+
+  const type = sourceParts(sourceId ?? "").type;
+  if (type !== "window") {
+    logger.info("screen captures share no audio, discord does the same");
+    return { track: null, audioVia: "screen share, no audio" };
+  }
+
+  const app = await appAudioTrack(sourceId!);
+  if (app) {
+    stream.addTrack(app);
+    return { track: app, audioVia: "application audio" };
+  }
+
+  logger.info("no audio could be captured from the shared window");
   return { track: null, audioVia: "none" };
 }
 
@@ -208,7 +195,7 @@ export async function captureScreen(
 
   let captured: { stream: MediaStream; via: string } | null = null;
   for (const attempt of [viaDisplayMedia, viaDiscordNative]) {
-    captured = await attempt(fps, height, wantAudio, source.id);
+    captured = await attempt(fps, height, source.id, wantAudio);
     if (captured?.stream.getVideoTracks().length) break;
     if (captured) stop(captured.stream);
     captured = null;
@@ -219,8 +206,9 @@ export async function captureScreen(
   if (!captured) throw new Error("no screen capture API available");
 
   const { stream, via } = captured;
-  const { track, audioVia } = await resolveAudio(stream, via, wantAudio, audioPreference);
+  const { track, audioVia } = await resolveAudio(stream, wantAudio, audioPreference, source.id);
 
-  logger.info(`captured ${stream.getVideoTracks()[0]?.label ?? "?"} via ${via} on ${os}, audio=${audioVia}`);
+  const detail = track ? `, ${describeAudio(track)}` : "";
+  logger.info(`captured ${stream.getVideoTracks()[0]?.label ?? "?"} via ${via} on ${os}, audio=${audioVia}${detail}`);
   return { stream, hasAudio: track !== null, via, audioVia } as CaptureResult;
 }

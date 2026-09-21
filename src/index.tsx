@@ -53,7 +53,7 @@ const settings = definePluginSettings({
   desktopAudio: {
     type: OptionType.STRING,
     description:
-      "Desktop audio source: auto, off, or part of an input device name (BlackHole, Monitor, Stereo Mix)",
+      "Stream audio: auto shares the audio of the window you picked, off shares none, or name an input device (BlackHole, Monitor, Stereo Mix) to capture that instead",
     default: "auto",
   },
   stunServers: {

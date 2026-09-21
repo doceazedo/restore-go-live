@@ -31,6 +31,12 @@ if (!existsSync(VENCORD)) {
 }
 
 if (!skipBuild) {
+  console.log("Embedding native helper...");
+  execFileSync(process.execPath, [join(ROOT, "scripts", "embed-native.mjs")], {
+    cwd: ROOT,
+    stdio: "inherit"
+  });
+
   console.log("Building...");
   const args = ["--dir", VENCORD, "build"];
   const [cmd, argv] = process.env.npm_execpath
