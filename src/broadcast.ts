@@ -8,6 +8,7 @@ import {
   streamQuality, subscribe
 } from "./discord";
 import { answerViewer, applyBitrate, IceConfig, selectedPair, waitConnected } from "./peers";
+import { GoLiveSource } from "./source";
 import {
   cleanupOwnLeftovers, clearBeacon, deleteWhenPeerGone, Handshake, publishBeacon, refreshBeacon,
   sendAnswer, watchOffers
@@ -19,6 +20,7 @@ export interface BroadcastOptions {
   ice: IceConfig;
   budgetMbps: number;
   audioPreference: string;
+  source: GoLiveSource;
 }
 
 interface Viewer {
@@ -30,6 +32,7 @@ class Broadcast {
   channelId = "";
   guildId: string | null = null;
   stream: MediaStream | null = null;
+  preview: MediaStream | null = null;
   hasAudio = false;
   viewers = new Map<string, Viewer>();
   private stopOffers: (() => void) | null = null;
@@ -58,8 +61,9 @@ class Broadcast {
     const { height, fps } = streamQuality();
     logger.info(`capturing at ${height}p ${fps}fps from discord settings`);
 
-    const capture = await captureScreen(fps, height, opts.audioPreference);
+    const capture = await captureScreen(fps, height, opts.audioPreference, opts.source);
     this.stream = capture.stream;
+    this.preview = new MediaStream(capture.stream.getVideoTracks());
     this.hasAudio = capture.hasAudio;
 
     capture.stream.getVideoTracks()[0]?.addEventListener("ended", () => void this.stop());
@@ -203,6 +207,7 @@ class Broadcast {
   private async teardownMedia() {
     this.stream?.getTracks().forEach(t => t.stop());
     this.stream = null;
+    this.preview = null;
   }
 
   async stop() {

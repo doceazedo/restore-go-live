@@ -9,6 +9,8 @@ const announceLogger = new Logger("P2PShare:announce");
 export const ApplicationStreamingStore = findStoreLazy("ApplicationStreamingStore");
 export const VoiceStateStore = findStoreLazy("VoiceStateStore");
 export const StreamingSettingsStore = findStoreLazy("ApplicationStreamingSettingsStore");
+export const MediaEngineStore = findStoreLazy("MediaEngineStore");
+export const RunningGameStore = findStoreLazy("RunningGameStore");
 
 export const CloudUpload: any = findLazy((m: any) => m.prototype?.trackUploadFinished);
 
@@ -96,6 +98,15 @@ export function streamQuality() {
     height: Number.isFinite(resolution) && resolution > 0 ? resolution : 1080,
     fps: Number.isFinite(fps) && fps > 0 ? fps : 30
   };
+}
+
+export function outputDeviceId(): string | null {
+  try {
+    const id = MediaEngineStore?.getOutputDeviceId?.();
+    return typeof id === "string" && id && id !== "default" ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 export function refreshAttached(stream: MediaStream) {

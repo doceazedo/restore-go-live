@@ -7,6 +7,7 @@ import {
   VoiceStateStore,
 } from "./discord";
 import { scanBeacons } from "./signaling";
+import { goLiveSource } from "./source";
 import { watcher } from "./watch";
 
 function describeTrack(t: MediaStreamTrack) {
@@ -34,7 +35,7 @@ function describeStream(s: MediaStream | null) {
 }
 
 function describeVideos() {
-  const ours = broadcast.stream ?? watcher.activeStream();
+  const ours = broadcast.preview ?? watcher.activeStream();
   return [...document.querySelectorAll("video")].map((v, i) => {
     const src = v.srcObject as MediaStream | null;
     return {
@@ -78,6 +79,7 @@ export async function diag() {
     broadcastSession: broadcast.sessionId,
     broadcastAudio: broadcast.hasAudio,
     broadcastStream: describeStream(broadcast.stream),
+    goLiveSource: goLiveSource(),
     viewers: [...broadcast.viewers.entries()].map(([id, v]) => ({
       id,
       connection: v.pc.connectionState,
@@ -253,7 +255,7 @@ export function findModules(pattern: string, context = 300, limit = 4) {
 }
 
 export function attachToAllVideos() {
-  const ours = broadcast.stream ?? watcher.activeStream();
+  const ours = broadcast.preview ?? watcher.activeStream();
   if (!ours) return "no p2p stream available";
   const videos = [...document.querySelectorAll("video")];
   for (const v of videos) {

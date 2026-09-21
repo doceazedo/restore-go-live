@@ -85,7 +85,7 @@ export async function createViewerOffer(cfg: IceConfig, wantAudio: boolean, targ
   const ready = new Promise<MediaStream>(resolve => {
     let seen = 0;
     pc.ontrack = e => {
-      stream.addTrack(e.track);
+      if (e.track.kind === "video") stream.addTrack(e.track);
       if (++seen >= want) resolve(stream);
     };
   });

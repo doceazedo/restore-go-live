@@ -9,6 +9,7 @@ import {
   announceVideo,
   currentUserId,
   guildIdOf,
+  outputDeviceId,
   refreshAttached,
   subscribe,
   voiceChannelId,
@@ -38,6 +39,7 @@ interface Session {
   messageId: string;
   pc?: RTCPeerConnection;
   stream?: MediaStream;
+  audio?: HTMLAudioElement;
   joining?: boolean;
   offerMessageId?: string;
 }
@@ -173,6 +175,37 @@ class Watcher {
     );
   }
 
+  private async playAudio(session: Session, track: MediaStreamTrack) {
+    const el = session.audio ?? new Audio();
+    el.autoplay = true;
+    el.srcObject = new MediaStream([track]);
+    session.audio = el;
+
+    const sink = outputDeviceId();
+    if (sink && typeof (el as any).setSinkId === "function") {
+      await (el as any)
+        .setSinkId(sink)
+        .catch((e: unknown) => logger.warn("could not route stream audio to the discord output device", e));
+    }
+
+    try {
+      await el.play();
+      logger.info(`playing stream audio from ${session.ownerId}`);
+    } catch (e) {
+      logger.warn("stream audio could not start", e);
+    }
+  }
+
+  private stopAudio(session: Session) {
+    const el = session.audio;
+    if (!el) return;
+    const playing = el.srcObject as MediaStream | null;
+    el.pause();
+    el.srcObject = null;
+    for (const t of playing?.getTracks() ?? []) t.stop();
+    session.audio = undefined;
+  }
+
   isOurs(key: string) {
     return this.sessions.has(key);
   }
@@ -206,6 +239,9 @@ class Watcher {
         session.stream,
       );
       session.pc = pc;
+      pc.addEventListener("track", e => {
+        if (e.track.kind === "audio") void this.playAudio(session, e.track);
+      });
 
       const answered = new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -247,7 +283,7 @@ class Watcher {
 
       logger.info(`connected via ${await selectedPair(pc)}`);
 
-      await ready;
+      await Promise.race([ready, new Promise(r => setTimeout(r, 8000))]);
       if (session.stream) refreshAttached(session.stream);
       announceVideo(session.ownerId, session.channelId, true);
       logger.info(
@@ -273,6 +309,7 @@ class Watcher {
     s.pc?.close();
     s.pc = undefined;
     s.joining = false;
+    this.stopAudio(s);
     for (const t of s.stream?.getTracks() ?? []) {
       t.stop();
       s.stream?.removeTrack(t);

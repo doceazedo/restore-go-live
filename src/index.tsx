@@ -1,9 +1,10 @@
 import { definePluginSettings } from "@api/Settings";
 import { Logger } from "@utils/Logger";
-import definePlugin, { OptionType, PluginNative } from "@utils/types";
+import definePlugin, { OptionType } from "@utils/types";
 import { Toasts } from "@webpack/common";
 
 import { parseStreamKey, streamKey } from "./core/session";
+import { Native } from "./bridge";
 import { broadcast } from "./broadcast";
 import {
   attachToAllVideos,
@@ -21,6 +22,7 @@ import {
   voiceChannelId,
 } from "./discord";
 import { scanBeacons } from "./signaling";
+import { goLiveSource, watchGoLiveSource } from "./source";
 import { IceConfig } from "./peers";
 import {
   browserVideoSourcePatch,
@@ -37,9 +39,7 @@ import { watcher } from "./watch";
 
 const logger = new Logger("P2PShare");
 const placeholderStream = new MediaStream();
-const Native = VencordNative.pluginHelpers.RestoreGoLive as PluginNative<
-  typeof import("./native")
->;
+let stopSourceWatch: (() => void) | null = null;
 
 const settings = definePluginSettings({
   uploadBudgetMbps: {
@@ -115,6 +115,8 @@ export default definePlugin({
       audio: audioDevices,
       beacons: (channelId?: string) =>
         scanBeacons(channelId ?? voiceChannelId()!),
+      sources: () => (IS_DISCORD_DESKTOP ? Native.listSources() : null),
+      picked: () => goLiveSource(),
       voiceChannelId,
     };
 
@@ -126,17 +128,20 @@ export default definePlugin({
       if (res.ok) logger.info("loopback audio handler installed", res);
       else logger.warn("loopback audio unavailable", (res as any).error);
     }
+    stopSourceWatch = watchGoLiveSource();
     watcher.start(ice());
   },
 
   stop() {
     broadcast.stop();
     watcher.stop();
+    stopSourceWatch?.();
+    stopSourceWatch = null;
     if (IS_DISCORD_DESKTOP)
       Native.disableLoopbackAudio().catch(() => undefined);
   },
 
-  onStreamStart(guildId: string | null, channelId: string, _opts: any) {
+  onStreamStart(guildId: string | null, channelId: string, opts: any) {
     const target = channelId ?? voiceChannelId();
     if (!target) return false;
 
@@ -145,6 +150,7 @@ export default definePlugin({
         ice: ice(),
         budgetMbps: settings.store.uploadBudgetMbps,
         audioPreference: settings.store.desktopAudio,
+        source: goLiveSource(opts),
       })
       .then(() => {
         toast(
@@ -179,7 +185,7 @@ export default definePlugin({
 
   qualityLabel() {
     return (
-      describeQuality(broadcast.stream ?? watcher.activeStream()) ?? undefined
+      describeQuality(broadcast.preview ?? watcher.activeStream()) ?? undefined
     );
   },
 
@@ -205,7 +211,7 @@ export default definePlugin({
     if (owner == null) return null;
     const ours =
       owner === currentUserId()
-        ? broadcast.stream
+        ? broadcast.preview
         : watcher.streamForOwner(owner);
     return ours ?? placeholderStream;
   },
