@@ -31,6 +31,9 @@ jobs:
       - name: Clone Vencord and link plugin
         run: node scripts/setup.mjs
 
+      - name: Embed native audio helper
+        run: node scripts/embed-native.mjs
+
       - name: Typecheck
         run: pnpm typecheck
 

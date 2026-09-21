@@ -1,6 +1,6 @@
 import { Logger } from "@utils/Logger";
 
-import { appAudioTrack } from "./appaudio";
+import { appAudioTrack, systemAudioTrack } from "./appaudio";
 import { loopbackTrack } from "./audio";
 import { Native } from "./bridge";
 import { electronSourceId, matchSource, sameSource, sourceParts } from "./core/sources";
@@ -168,19 +168,14 @@ async function resolveAudio(
 
   drop();
 
-  const type = sourceParts(sourceId ?? "").type;
-  if (type !== "window") {
-    logger.info("screen captures share no audio, discord does the same");
-    return { track: null, audioVia: "screen share, no audio" };
-  }
-
-  const app = await appAudioTrack(sourceId!);
+  const window = sourceParts(sourceId ?? "").type === "window";
+  const app = window ? await appAudioTrack(sourceId!) : await systemAudioTrack();
   if (app) {
     stream.addTrack(app);
-    return { track: app, audioVia: "application audio" };
+    return { track: app, audioVia: window ? "window audio" : "system audio without discord" };
   }
 
-  logger.info("no audio could be captured from the shared window");
+  logger.info(`no audio could be captured for ${sourceId ?? "this capture"}`);
   return { track: null, audioVia: "none" };
 }
 

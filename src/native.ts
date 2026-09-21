@@ -178,12 +178,12 @@ export async function preferSource(_: IpcMainInvokeEvent, id: string | null): Pr
   }
 }
 
-export async function startAppAudio(_: IpcMainInvokeEvent, pid: number) {
+async function startCapture(pid: number, exclude: boolean) {
   stopCapture();
   captureError = null;
 
   if (process.platform !== "win32") {
-    return { ok: false, error: "per application audio is only implemented on windows" };
+    return { ok: false, error: "process audio capture is only implemented on windows" };
   }
   if (!Number.isInteger(pid) || pid <= 1) {
     return { ok: false, error: `${pid} is not a capturable process id` };
@@ -197,7 +197,8 @@ export async function startAppAudio(_: IpcMainInvokeEvent, pid: number) {
   }
 
   try {
-    const child = spawn(exe, [String(pid), "--watch-stdin"], { stdio: ["pipe", "pipe", "pipe"] });
+    const args = exclude ? [String(pid), "--exclude", "--watch-stdin"] : [String(pid), "--watch-stdin"];
+    const child = spawn(exe, args, { stdio: ["pipe", "pipe", "pipe"] });
     capture = child;
 
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -227,6 +228,14 @@ export async function startAppAudio(_: IpcMainInvokeEvent, pid: number) {
     stopCapture();
     return { ok: false, error: `could not start the audio helper: ${String(e?.message ?? e)}` };
   }
+}
+
+export async function startAppAudio(_: IpcMainInvokeEvent, pid: number) {
+  return startCapture(pid, false);
+}
+
+export async function startSystemAudio(_: IpcMainInvokeEvent) {
+  return startCapture(process.pid, true);
 }
 
 export async function readAppAudio(_: IpcMainInvokeEvent, waitMs = 250) {

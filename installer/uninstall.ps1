@@ -24,4 +24,5 @@ foreach ($branch in $branches) {
 }
 
 Remove-Item -Recurse -Force (Join-Path $data "dist") -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $env:TEMP "restore-go-live") -ErrorAction SilentlyContinue
 Write-Host "done! restart Discord"

@@ -56,15 +56,9 @@ function toBuffer(ctx: AudioContext, samples: Int16Array, channels: number) {
   return buffer;
 }
 
-export async function appAudioTrack(sourceId: string) {
-  if (!IS_DISCORD_DESKTOP) return null;
-
-  const pid = audioPidOf(sourceId);
-  if (!pid) return null;
-
-  const started = await Native.startAppAudio(pid);
+async function trackFrom(started: any, what: string) {
   if (!started?.ok) {
-    logger.warn(`could not capture pid ${pid}: ${started?.error}`);
+    logger.warn(`could not capture ${what}: ${started?.error}`);
     return null;
   }
 
@@ -109,6 +103,21 @@ export async function appAudioTrack(sourceId: string) {
   };
 
   void pump();
-  logger.info(`streaming audio of pid ${pid} at ${started.sampleRate}hz`);
+  logger.info(`streaming audio of ${what} at ${started.sampleRate}hz`);
   return track;
+}
+
+export async function appAudioTrack(sourceId: string) {
+  if (!IS_DISCORD_DESKTOP) return null;
+
+  const pid = audioPidOf(sourceId);
+  if (!pid) return null;
+
+  return trackFrom(await Native.startAppAudio(pid), `pid ${pid}`);
+}
+
+export async function systemAudioTrack() {
+  if (!IS_DISCORD_DESKTOP) return null;
+
+  return trackFrom(await Native.startSystemAudio(), "everything except discord");
 }
