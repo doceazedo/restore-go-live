@@ -8,14 +8,15 @@ foreach ($branch in $branches) {
     if (-not (Test-Path $root)) { continue }
     Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue | ForEach-Object {
         $res = Join-Path $_.FullName "resources"
-        $appDir = Join-Path $res "app"
         $orig = Join-Path $res "_app.asar"
 
-        if (Test-Path (Join-Path $appDir "index.js")) {
-            Remove-Item -Recurse -Force $appDir
-            Write-Host "removed shim from $res"
+        foreach ($shim in @((Join-Path $res "app.asar"), (Join-Path $res "app"))) {
+            if ((Test-Path $shim -PathType Container) -and (Test-Path (Join-Path $shim "index.js"))) {
+                Remove-Item -Recurse -Force $shim
+                Write-Host "removed shim from $res"
+            }
         }
-        if ((Test-Path $orig) -and -not (Test-Path (Join-Path $res "app.asar"))) {
+        if ((Test-Path $orig -PathType Leaf) -and -not (Test-Path (Join-Path $res "app.asar"))) {
             Move-Item -Path $orig -Destination (Join-Path $res "app.asar") -Force
             Write-Host "restored original app.asar in $res"
         }

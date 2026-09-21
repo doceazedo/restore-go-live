@@ -69,25 +69,42 @@ $patcher = (Join-Path $distDir "patcher.js") -replace '\\', '\\'
 
 foreach ($label in $targets.Keys) {
     $res = $targets[$label]
+    $asar = Join-Path $res "app.asar"
+    $orig = Join-Path $res "_app.asar"
     Write-Host ""
     Write-Host "-> $label"
 
-    if (Test-Path (Join-Path $res "_app.asar")) {
-        Write-Host "   already patched, plugin files refreshed"
-        continue
+    $fresh = $false
+    if (Test-Path $asar -PathType Leaf) {
+        try {
+            Remove-Item -Force $orig -ErrorAction SilentlyContinue
+            Move-Item -Path $asar -Destination $orig -Force
+        } catch {
+            Write-Host "   FAILED: cannot write to $res, fully close Discord and try again"
+            continue
+        }
+        $fresh = $true
     }
-    try {
-        Move-Item -Path (Join-Path $res "app.asar") -Destination (Join-Path $res "_app.asar") -Force
-    } catch {
-        Write-Host "   FAILED: cannot write to $res, fully close Discord and try again"
+
+    if (-not (Test-Path $orig -PathType Leaf)) {
+        Write-Host "   skipped: no app.asar"
         continue
     }
 
-    $appDir = Join-Path $res "app"
-    New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-    Set-Content -Path (Join-Path $appDir "index.js") -Value "require(`"$patcher`");"
-    Set-Content -Path (Join-Path $appDir "package.json") -Value '{"name":"discord","main":"index.js"}'
-    Write-Host "   patched"
+    $legacy = Join-Path $res "app"
+    if (Test-Path (Join-Path $legacy "index.js")) {
+        Remove-Item -Recurse -Force $legacy
+    }
+
+    New-Item -ItemType Directory -Force -Path $asar | Out-Null
+    Set-Content -Path (Join-Path $asar "index.js") -Value "require(`"$patcher`");"
+    Set-Content -Path (Join-Path $asar "package.json") -Value '{"name":"discord","main":"index.js"}'
+
+    if ($fresh) {
+        Write-Host "   patched"
+    } else {
+        Write-Host "   already patched, plugin files refreshed"
+    }
 }
 
 Write-Host ""

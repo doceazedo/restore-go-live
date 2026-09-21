@@ -99,25 +99,39 @@ for entry in "${TARGETS[@]}"; do
   say ""
   say "-> $label"
 
-  if [ -f "$RES/_app.asar" ]; then
-    say "   already patched, plugin files refreshed"
-    continue
+  FRESH=0
+  if [ -f "$RES/app.asar" ]; then
+    rm -f "$RES/_app.asar"
+    if ! mv "$RES/app.asar" "$RES/_app.asar" 2>/dev/null; then
+      say "   FAILED: cannot write to $RES"
+      [ "$(uname -s)" = Darwin ] && say "   grant your terminal App Management in System Settings -> Privacy & Security, then rerun"
+      [ "$(uname -s)" = Linux ] && say "   try again with sudo"
+      continue
+    fi
+    FRESH=1
   fi
-  if [ ! -f "$RES/app.asar" ]; then
+
+  if [ ! -f "$RES/_app.asar" ]; then
     say "   skipped: no app.asar"
     continue
   fi
-  if ! mv "$RES/app.asar" "$RES/_app.asar" 2>/dev/null; then
-    say "   FAILED: cannot write to $RES"
-    [ "$(uname -s)" = Darwin ] && say "   grant your terminal App Management in System Settings -> Privacy & Security, then rerun"
-    [ "$(uname -s)" = Linux ] && say "   try again with sudo"
-    continue
+
+  if [ -d "$RES/app" ] && grep -q "patcher.js" "$RES/app/index.js" 2>/dev/null; then
+    rm -rf "$RES/app"
   fi
 
-  mkdir -p "$RES/app"
-  printf 'require("%s");\n' "$ESCAPED" > "$RES/app/index.js"
-  printf '{"name":"discord","main":"index.js"}\n' > "$RES/app/package.json"
-  say "   patched"
+  if ! mkdir -p "$RES/app.asar" 2>/dev/null; then
+    say "   FAILED: cannot write to $RES"
+    continue
+  fi
+  printf 'require("%s");\n' "$ESCAPED" > "$RES/app.asar/index.js"
+  printf '{"name":"discord","main":"index.js"}\n' > "$RES/app.asar/package.json"
+
+  if [ "$FRESH" = 1 ]; then
+    say "   patched"
+  else
+    say "   already patched, plugin files refreshed"
+  fi
 done
 
 say ""

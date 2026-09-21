@@ -17,10 +17,12 @@ esac
 
 for RES in "${CANDIDATES[@]}"; do
   [ -d "$RES" ] || continue
-  if [ -d "$RES/app" ] && grep -q "patcher.js" "$RES/app/index.js" 2>/dev/null; then
-    rm -rf "$RES/app"
-    say "removed shim from $RES"
-  fi
+  for SHIM in "$RES/app.asar" "$RES/app"; do
+    if [ -d "$SHIM" ] && grep -q "patcher.js" "$SHIM/index.js" 2>/dev/null; then
+      rm -rf "$SHIM"
+      say "removed shim from $RES"
+    fi
+  done
   if [ -f "$RES/_app.asar" ] && [ ! -f "$RES/app.asar" ]; then
     mv "$RES/_app.asar" "$RES/app.asar"
     say "restored original app.asar in $RES"
