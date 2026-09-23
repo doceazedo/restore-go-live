@@ -41,9 +41,16 @@ export function clearBeacon(channelId: string, messageId: string) {
   return deleteMessage(channelId, messageId);
 }
 
+function serverTime(msg: any) {
+  const t = Date.parse(msg?.edited_timestamp ?? msg?.timestamp ?? "");
+  return Number.isFinite(t) ? t : null;
+}
+
 function toLive(msg: any): LiveBeacon | null {
-  const beacon = decodeBeacon(msg?.content);
-  if (!beacon || isStale(beacon)) return null;
+  const decoded = decodeBeacon(msg?.content);
+  if (!decoded) return null;
+  const beacon = { ...decoded, heartbeat: serverTime(msg) ?? decoded.heartbeat };
+  if (isStale(beacon)) return null;
   const ownerId = msg.author?.id;
   if (!ownerId) return null;
   return { beacon, ownerId, channelId: msg.channel_id, messageId: msg.id };
