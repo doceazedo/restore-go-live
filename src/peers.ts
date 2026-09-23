@@ -33,17 +33,27 @@ export async function selectedPair(pc: RTCPeerConnection) {
   return out;
 }
 
-export async function gatherComplete(pc: RTCPeerConnection, timeoutMs = 4000) {
+export async function gatherComplete(pc: RTCPeerConnection, timeoutMs = 2000, graceMs = 300) {
   if (pc.iceGatheringState === "complete") return;
+  const started = performance.now();
   await new Promise<void>(resolve => {
-    const done = () => {
+    let grace: ReturnType<typeof setTimeout> | null = null;
+    const done = (reason: string) => {
       clearTimeout(timer);
+      if (grace) clearTimeout(grace);
       pc.removeEventListener("icegatheringstatechange", onChange);
+      pc.removeEventListener("icecandidate", onCandidate);
+      logger.info(`ice gathering ended (${reason}) after ${Math.round(performance.now() - started)}ms`);
       resolve();
     };
-    const onChange = () => pc.iceGatheringState === "complete" && done();
-    const timer = setTimeout(done, timeoutMs);
+    const onChange = () => pc.iceGatheringState === "complete" && done("complete");
+    const onCandidate = (e: RTCPeerConnectionIceEvent) => {
+      if (grace || e.candidate?.type !== "srflx") return;
+      grace = setTimeout(() => done("srflx"), graceMs);
+    };
+    const timer = setTimeout(() => done("timeout"), timeoutMs);
     pc.addEventListener("icegatheringstatechange", onChange);
+    pc.addEventListener("icecandidate", onCandidate);
   });
 }
 
