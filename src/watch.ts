@@ -9,6 +9,7 @@ import {
   announceVideo,
   currentUserId,
   guildIdOf,
+  isWatchingStream,
   outputDeviceId,
   refreshAttached,
   STREAM_CONTEXT,
@@ -84,9 +85,12 @@ class Watcher {
   private extra: Array<() => void> = [];
   private lastScanned: string | null = null;
   private ice: IceConfig = { stun: [] };
+  private pendingWatch = new Set<string>();
+  private onJoinError: (e: Error) => void = () => undefined;
 
-  start(ice: IceConfig) {
+  start(ice: IceConfig, onJoinError: (e: Error) => void) {
     this.ice = ice;
+    this.onJoinError = onJoinError;
     this.stopBeacons = watchBeacons(
       (live) => this.onBeacon(live),
       (channelId, messageId) => this.onBeaconGone(channelId, messageId),
@@ -114,7 +118,16 @@ class Watcher {
       addInterceptor((action: any) => {
         const type: string = action?.type ?? "";
         const key: string | undefined = action?.streamKey;
-        const session = key ? this.sessions.get(key) : undefined;
+        if (!key) return false;
+        const session = this.sessions.get(key);
+
+        if (type === "STREAM_WATCH" && !session) {
+          this.pendingWatch.add(key);
+          return false;
+        }
+
+        if (type === "STREAM_CLOSE") this.pendingWatch.delete(key);
+
         if (!session) return false;
 
         if (type === "STREAM_CLOSE") {
@@ -164,6 +177,7 @@ class Watcher {
     for (const off of this.extra) off();
     this.extra = [];
     this.lastScanned = null;
+    this.pendingWatch.clear();
     for (const key of [...this.sessions.keys()]) this.forget(key);
   }
 
@@ -197,6 +211,17 @@ class Watcher {
     logger.info(
       `${ownerId} is live (session ${beacon.sessionId}, audio=${beacon.hasAudio})`,
     );
+    this.resumeWatch(key);
+  }
+
+  private resumeWatch(key: string) {
+    const pending = this.pendingWatch.delete(key);
+    if (!pending && !isWatchingStream(key)) return;
+    logger.info(`discord is already watching ${key}, resuming p2p`);
+    this.join(key).catch((e) => {
+      logger.error("failed to resume watching", e);
+      this.onJoinError(e);
+    });
   }
 
   private onBeaconGone(channelId: string, messageId: string) {

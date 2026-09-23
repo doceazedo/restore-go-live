@@ -133,7 +133,9 @@ export default definePlugin({
     }
     stopSourceWatch = watchGoLiveSource();
     startViewerTracking();
-    watcher.start(ice());
+    watcher.start(ice(), (e) =>
+      toast(`Could not connect: ${e.message}`, Toasts.Type.FAILURE),
+    );
   },
 
   stop() {
