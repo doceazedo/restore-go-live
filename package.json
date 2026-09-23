@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "build": "node scripts/build.mjs build",
+    "build": "node scripts/build.mjs build --standalone",
     "buildWeb": "node scripts/build.mjs buildWeb",
     "watch": "node scripts/build.mjs build --watch",
     "embed": "node scripts/embed-native.mjs",

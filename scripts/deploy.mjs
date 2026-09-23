@@ -38,7 +38,7 @@ if (!skipBuild) {
   });
 
   console.log("Building...");
-  execFileSync(process.execPath, [join(ROOT, "scripts", "build.mjs"), "build"], {
+  execFileSync(process.execPath, [join(ROOT, "scripts", "build.mjs"), "build", "--standalone"], {
     cwd: ROOT,
     stdio: "inherit"
   });
