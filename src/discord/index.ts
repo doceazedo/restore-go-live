@@ -85,15 +85,6 @@ export function announceStream(userId: string, channelId: string, on: boolean) {
   return true;
 }
 
-export function isWatchingStream(key: string) {
-  try {
-    const active = ApplicationStreamingStore.getActiveStreamForStreamKey?.(key);
-    return active != null && active.state !== "ENDED";
-  } catch {
-    return false;
-  }
-}
-
 export function guildIdOf(channelId: string | null) {
   const ch = channelOf(channelId);
   return ch?.guild_id ?? null;
