@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "build": "VENCORD_REMOTE=Vendicated/Vencord VENCORD_HASH=dev pnpm --dir Vencord build",
-    "buildWeb": "VENCORD_REMOTE=Vendicated/Vencord VENCORD_HASH=dev pnpm --dir Vencord buildWeb",
-    "watch": "VENCORD_REMOTE=Vendicated/Vencord VENCORD_HASH=dev pnpm --dir Vencord build --watch",
+    "build": "node scripts/build.mjs build",
+    "buildWeb": "node scripts/build.mjs buildWeb",
+    "watch": "node scripts/build.mjs build --watch",
     "embed": "node scripts/embed-native.mjs",
     "deploy": "node scripts/deploy.mjs",
     "inject": "pnpm --dir Vencord inject",

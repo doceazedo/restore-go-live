@@ -52,7 +52,7 @@ jobs:
         run: |
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest \
-            --title "RestoreGoLive (latest)" \
+            --title "RestoreGoLive $(git rev-parse --short=7 HEAD)" \
             --notes "Automatic build of \`main\` (${{ github.sha }}).
 
           Windows:

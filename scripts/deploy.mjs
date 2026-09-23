@@ -38,14 +38,9 @@ if (!skipBuild) {
   });
 
   console.log("Building...");
-  const args = ["--dir", VENCORD, "build"];
-  const [cmd, argv] = process.env.npm_execpath
-    ? [process.execPath, [process.env.npm_execpath, ...args]]
-    : ["pnpm", args];
-  execFileSync(cmd, argv, {
+  execFileSync(process.execPath, [join(ROOT, "scripts", "build.mjs"), "build"], {
     cwd: ROOT,
-    stdio: "inherit",
-    env: { ...process.env, VENCORD_REMOTE: "Vendicated/Vencord", VENCORD_HASH: "dev" }
+    stdio: "inherit"
   });
 }
 
