@@ -32,6 +32,7 @@ import {
   watchAnswers,
   watchBeacons,
 } from "./signaling";
+import { clearJoinStages, JoinStage, setJoinStage } from "./status";
 import { markWatching, trackViewers, untrackViewers } from "./viewers";
 
 const logger = new Logger("P2PShare:watch");
@@ -178,6 +179,7 @@ class Watcher {
     this.extra = [];
     this.lastScanned = null;
     this.pendingWatch.clear();
+    clearJoinStages();
     for (const key of [...this.sessions.keys()]) this.forget(key);
   }
 
@@ -297,6 +299,7 @@ class Watcher {
 
     try {
       logger.info(`joining ${key}`);
+      setJoinStage(key, JoinStage.PREPARING);
       const { pc, ready, sdp } = await createViewerOffer(
         this.ice,
         session.beacon.hasAudio,
@@ -328,15 +331,18 @@ class Watcher {
         );
       });
 
+      setJoinStage(key, JoinStage.REQUESTING);
       session.offerMessageId = await sendOffer(
         session.channelId,
         { s: session.beacon.sessionId, sdp },
         session.messageId,
       );
 
+      setJoinStage(key, JoinStage.WAITING_ANSWER);
       const answerSdp = await answered;
       deleteOwn(session.channelId, session.offerMessageId);
       session.offerMessageId = undefined;
+      setJoinStage(key, JoinStage.CONNECTING);
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
       if (!(await waitConnected(pc))) {
@@ -346,6 +352,7 @@ class Watcher {
       }
 
       logger.info(`connected via ${await selectedPair(pc)}`);
+      setJoinStage(key, JoinStage.WAITING_VIDEO);
 
       await Promise.race([ready, new Promise(r => setTimeout(r, 8000))]);
       if (session.stream) refreshAttached(session.stream);
@@ -366,6 +373,7 @@ class Watcher {
       throw e;
     } finally {
       session.joining = false;
+      setJoinStage(key, null);
     }
   }
 
@@ -375,6 +383,7 @@ class Watcher {
     s.pc?.close();
     s.pc = undefined;
     s.joining = false;
+    setJoinStage(key, null);
     if (s.watching) {
       s.watching = false;
       void markWatching(s.channelId, s.messageId, false);

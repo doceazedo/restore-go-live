@@ -25,12 +25,14 @@ import {
 import { scanBeacons } from "./signaling";
 import { goLiveSource, watchGoLiveSource } from "./source";
 import { IceConfig } from "./peers";
+import { JoinStatus } from "./status";
 import {
   browserVideoSourcePatch,
   qualityChangePatch,
   qualityLabelPatch,
   streamStartPatch,
   streamTileEndedPatch,
+  streamSpinnerLabelPatch,
   streamTileErrorPatch,
   streamWatchPatch,
   videoSourcePatch,
@@ -102,6 +104,7 @@ export default definePlugin({
     streamTileErrorPatch,
     qualityLabelPatch,
     qualityChangePatch,
+    streamSpinnerLabelPatch,
   ],
 
   async start() {
@@ -181,6 +184,10 @@ export default definePlugin({
     logger.info(`quality change requested: ${resolution}p ${frameRate}fps`);
     dispatch({ type: "STREAM_UPDATE_SETTINGS", resolution, frameRate });
     return true;
+  },
+
+  renderJoinStatus(streamKey?: string) {
+    return <JoinStatus streamKey={streamKey} />;
   },
 
   qualityLabel() {

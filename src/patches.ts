@@ -66,3 +66,11 @@ export const browserVideoSourcePatch: PluginPatch = {
   },
   noWarn: true
 };
+
+export const streamSpinnerLabelPatch: PluginPatch = {
+  find: 'location:"VideoStream"',
+  replacement: {
+    match: /(streamKey:(\i),emptyPreviewAspectRatio.+?)(\(0,\i\.jsx\)\(\i\.\i,\{className:\i\.spinner\}\))/,
+    replace: "$1$3,$self.renderJoinStatus($2)"
+  }
+};
