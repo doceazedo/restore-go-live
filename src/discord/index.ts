@@ -172,6 +172,26 @@ export async function recentMessages(channelId: string, limit = 50) {
   return (res.body ?? []) as any[];
 }
 
+function reactionUrl(channelId: string, messageId: string, emoji: string, userId = "@me") {
+  return `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/${userId}`;
+}
+
+export async function addReaction(channelId: string, messageId: string, emoji: string) {
+  return RestAPI.put({ url: reactionUrl(channelId, messageId, emoji) });
+}
+
+export async function removeReaction(channelId: string, messageId: string, emoji: string) {
+  return RestAPI.del({ url: reactionUrl(channelId, messageId, emoji) });
+}
+
+export async function reactors(channelId: string, messageId: string, emoji: string) {
+  const res = await RestAPI.get({
+    url: `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+    query: { limit: 100 }
+  });
+  return ((res.body ?? []) as any[]).map(u => u?.id as string).filter(Boolean);
+}
+
 export function uploadText(channelId: string, filename: string, text: string, replyToId?: string) {
   return new Promise<string>((resolve, reject) => {
     const upload = new CloudUpload({

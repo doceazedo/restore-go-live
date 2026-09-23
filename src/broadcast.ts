@@ -13,6 +13,7 @@ import {
   cleanupOwnLeftovers, clearBeacon, deleteWhenPeerGone, Handshake, publishBeacon, refreshBeacon,
   sendAnswer, watchOffers
 } from "./signaling";
+import { trackViewers, untrackViewers } from "./viewers";
 
 const logger = new Logger("P2PShare:broadcast");
 
@@ -106,6 +107,7 @@ class Broadcast {
     }
 
     this.announceSelf(true);
+    void trackViewers(this.key!, currentUserId(), channelId, this.beaconMessageId!);
     logger.info(`live session=${this.sessionId} audio=${this.hasAudio} channel=${channelId}`);
   }
 
@@ -220,6 +222,7 @@ class Broadcast {
     this.stopOffers = null;
     for (const [, v] of this.viewers) v.pc.close();
     this.viewers.clear();
+    if (this.beaconMessageId) untrackViewers(this.beaconMessageId);
     await this.teardownMedia();
     this.announceSelf(false);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);

@@ -36,6 +36,7 @@ import {
   videoSourcePatch,
 } from "./patches";
 import { videoGuardPatch } from "./videoGuard";
+import { startViewerTracking, stopViewerTracking } from "./viewers";
 import { watcher } from "./watch";
 
 const logger = new Logger("P2PShare");
@@ -131,12 +132,14 @@ export default definePlugin({
       else logger.warn("loopback audio unavailable", (res as any).error);
     }
     stopSourceWatch = watchGoLiveSource();
+    startViewerTracking();
     watcher.start(ice());
   },
 
   stop() {
     broadcast.stop();
     watcher.stop();
+    stopViewerTracking();
     stopSourceWatch?.();
     stopSourceWatch = null;
     if (IS_DISCORD_DESKTOP)

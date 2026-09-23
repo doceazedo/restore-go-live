@@ -31,6 +31,7 @@ import {
   watchAnswers,
   watchBeacons,
 } from "./signaling";
+import { markWatching, trackViewers, untrackViewers } from "./viewers";
 
 const logger = new Logger("P2PShare:watch");
 
@@ -73,6 +74,7 @@ interface Session {
   audio?: HTMLAudioElement;
   joining?: boolean;
   offerMessageId?: string;
+  watching?: boolean;
 }
 
 class Watcher {
@@ -188,6 +190,10 @@ class Watcher {
     };
     this.sessions.set(key, session);
     this.announceLocal(session, true);
+    void trackViewers(key, ownerId, channelId, messageId).then((found) => {
+      if (this.sessions.get(key) !== session || session.watching) return;
+      if (found.includes(currentUserId())) void markWatching(channelId, messageId, false);
+    });
     logger.info(
       `${ownerId} is live (session ${beacon.sessionId}, audio=${beacon.hasAudio})`,
     );
@@ -319,6 +325,8 @@ class Watcher {
       await Promise.race([ready, new Promise(r => setTimeout(r, 8000))]);
       if (session.stream) refreshAttached(session.stream);
       announceVideo(session.ownerId, session.channelId, true);
+      session.watching = true;
+      void markWatching(session.channelId, session.messageId, true);
       logger.info(
         `watching ${key} tracks=${session.stream
           ?.getTracks()
@@ -342,6 +350,10 @@ class Watcher {
     s.pc?.close();
     s.pc = undefined;
     s.joining = false;
+    if (s.watching) {
+      s.watching = false;
+      void markWatching(s.channelId, s.messageId, false);
+    }
     this.stopAudio(s);
     for (const t of s.stream?.getTracks() ?? []) {
       t.stop();
@@ -355,6 +367,7 @@ class Watcher {
     const s = this.sessions.get(key);
     if (!s) return;
     this.leave(key);
+    untrackViewers(s.messageId);
     this.announceLocal(s, false);
     this.sessions.delete(key);
   }
