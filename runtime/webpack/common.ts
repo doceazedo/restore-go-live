@@ -1,4 +1,4 @@
-import { filters, find, findByCodeLazy, findLazy, findStoreLazy, mapMangledModule, mapMangledModuleLazy, waitFor } from "./finders";
+import { filters, find, findLazy, findStoreLazy, mapMangledModule, mapMangledModuleLazy, waitFor } from "./finders";
 
 export let React: any;
 export let FluxDispatcher: any;
@@ -27,9 +27,6 @@ export function useReducer(...args: any[]) {
   return React.useReducer(...args);
 }
 
-export function useState(...args: any[]) {
-  return React.useState(...args);
-}
 
 export const RestAPI: any = findLazy((m) => typeof m === "object" && m.del && m.put && m.patch, "RestAPI");
 
@@ -85,5 +82,3 @@ export const Toasts = {
     else t.show(data);
   },
 };
-
-export const createRoot: any = findByCodeLazy("(299));", ".onRecoverableError");

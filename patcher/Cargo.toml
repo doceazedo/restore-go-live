@@ -3,6 +3,7 @@ name = "restore-go-live"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "restore-go-live"
 
 [lib]
 name = "rgl"

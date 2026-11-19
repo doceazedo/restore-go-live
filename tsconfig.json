@@ -10,6 +10,8 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noImplicitAny": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "target": "ESNEXT",
     "jsx": "preserve",
     "noEmit": true,

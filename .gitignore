@@ -1,9 +1,6 @@
-Vencord/
 node_modules/
 dist/
+release/
+patcher/target/
 *.log
 .DS_Store
-
-release/
-
-patcher/target/

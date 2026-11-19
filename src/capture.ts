@@ -98,7 +98,7 @@ const viaDisplayMedia: Attempt = async (fps, height, sourceId) => {
   }
 };
 
-const viaDiscordNative: Attempt = async (fps, height, sourceId, wantAudio) => {
+const viaDiscordNative: Attempt = async (fps, height, sourceId) => {
   try {
     const sources = await DiscordNative?.desktopCapture?.getDesktopCaptureSources?.({
       types: ["screen", "window"],

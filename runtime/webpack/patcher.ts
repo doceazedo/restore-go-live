@@ -16,26 +16,12 @@ export const executed = new Map<PropertyKey, { exports: any }>();
 const pending: Patch[] = [];
 export const patchReport = new Map<Patch, { found: boolean; applied: number; errors: string[] }>();
 export const moduleListeners = new Set<Listener>();
-const readyListeners = new Set<() => void>();
-
-export function onWebpackInit(cb: () => void) {
-  if (wreq) cb();
-  else readyListeners.add(cb);
-}
 
 function initWebpack(require: any) {
   if (wreq) return;
   wreq = require;
   cache = require.c;
   logger.info("webpack require captured");
-  for (const cb of readyListeners) {
-    try {
-      cb();
-    } catch (e) {
-      logger.error("init listener failed", e);
-    }
-  }
-  readyListeners.clear();
 }
 
 export function canonicalizeMatch<T extends string | RegExp>(match: T): T {

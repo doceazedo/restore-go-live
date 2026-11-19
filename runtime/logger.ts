@@ -21,8 +21,4 @@ export class Logger {
   error(...args: any[]) {
     this.log("error", args);
   }
-
-  debug(...args: any[]) {
-    this.log("debug", args);
-  }
 }

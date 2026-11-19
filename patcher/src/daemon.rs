@@ -27,11 +27,7 @@ const RELAUNCH_WINDOW_SECS: u64 = 60;
 const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(20);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const UPDATE_RETRY: Duration = Duration::from_secs(30 * 60);
-pub const BUILD: &str = match option_env!("RGL_VERSION") {
-    Some(v) => v,
-    None => "dev",
-};
-pub const BUILD_VERSION: &str = match option_env!("RGL_VERSION") {
+pub const VERSION: &str = match option_env!("RGL_VERSION") {
     Some(v) => v,
     None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
 };
@@ -239,7 +235,7 @@ pub fn run(ctx: Context) -> Result<()> {
         return Ok(());
     };
     crate::log::init(&ctx.paths.logs(), "daemon.log");
-    info!("daemon {} ({BUILD}) started", env!("CARGO_PKG_VERSION"));
+    info!("daemon {VERSION} started");
     system::remove_stale_exes(&ctx.paths.bin);
 
     let (tx, rx) = mpsc::channel::<()>();

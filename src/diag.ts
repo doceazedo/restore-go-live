@@ -8,7 +8,6 @@ import {
   voiceChannelId,
   VoiceStateStore,
 } from "./discord";
-import { scanBeacons } from "./signaling";
 import { goLiveSource } from "./source";
 import { watcher } from "./watch";
 

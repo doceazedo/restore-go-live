@@ -12,7 +12,7 @@ use crate::update::{self, Fetch};
 use crate::{daemon, payload, system};
 
 #[derive(Parser, Debug)]
-#[command(name = "restore-go-live", version = crate::daemon::BUILD_VERSION, about = "Keeps RestoreGoLive patched into Discord")]
+#[command(name = "restore-go-live", version = crate::daemon::VERSION, about = "Keeps RestoreGoLive patched into Discord")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,

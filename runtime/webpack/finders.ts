@@ -86,7 +86,7 @@ export function find(filter: Filter) {
   return null;
 }
 
-export function findModuleId(...code: Array<string | RegExp>): string | null {
+function findModuleId(...code: Array<string | RegExp>): string | null {
   if (!wreq?.m) return null;
   const canon = code.map(canonicalizeMatch);
   for (const id in wreq.m) {
@@ -95,7 +95,7 @@ export function findModuleId(...code: Array<string | RegExp>): string | null {
   return null;
 }
 
-export function factoryCode(factory: any): string {
+function factoryCode(factory: any): string {
   try {
     return String(factory);
   } catch {
@@ -125,7 +125,7 @@ export function mapMangledModule<S extends string>(code: string | RegExp, mapper
   return result;
 }
 
-export function proxyLazy<T = any>(factory: () => T, describe: string): T {
+function proxyLazy<T = any>(factory: () => T, describe: string): T {
   let resolved: any;
   const dummy = function () {} as any;
   const get = () => {
@@ -164,16 +164,8 @@ export function findLazy<T = any>(filter: Filter, describe = "findLazy"): T {
   return proxyLazy(() => find(filter), describe);
 }
 
-export function findByProps<T = any>(...props: string[]): T {
-  return find(filters.byProps(...props));
-}
-
 export function findByPropsLazy<T = any>(...props: string[]): T {
   return proxyLazy(() => find(filters.byProps(...props)), `byProps(${props.join(", ")})`);
-}
-
-export function findByCode<T = any>(...code: Array<string | RegExp>): T {
-  return find(filters.byCode(...code));
 }
 
 export function findByCodeLazy<T = any>(...code: Array<string | RegExp>): T {
