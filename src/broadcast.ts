@@ -74,7 +74,8 @@ class Broadcast {
     }));
 
     for (const event of ["STREAM_STOP", "STREAM_DELETE", "STREAM_CLOSE"]) {
-      this.stopHooks.push(subscribe(event, () => {
+      this.stopHooks.push(subscribe(event, (action: any) => {
+        if (action?.streamKey && action.streamKey !== this.key) return;
         if (!this.stopping && this.engaged) {
           logger.info(`${event} observed, tearing down`);
           void this.stop();

@@ -8,6 +8,7 @@ import {
   announceStream,
   announceVideo,
   currentUserId,
+  dispatch,
   guildIdOf,
   outputDeviceId,
   refreshAttached,
@@ -377,6 +378,7 @@ class Watcher {
     untrackViewers(s.messageId);
     this.announceLocal(s, false);
     this.sessions.delete(key);
+    dispatch({ type: "STREAM_DELETE", streamKey: key, unavailable: false });
   }
 }
 
