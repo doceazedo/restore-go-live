@@ -1,4 +1,4 @@
-import { Logger } from "@utils/Logger";
+import { Logger } from "@runtime/logger";
 
 import { appAudioTrack, systemAudioTrack } from "./appaudio";
 import { loopbackTrack } from "./audio";
@@ -98,7 +98,7 @@ const viaDisplayMedia: Attempt = async (fps, height, sourceId) => {
   }
 };
 
-const viaDiscordNative: Attempt = async (fps, height, sourceId, wantAudio) => {
+const viaDiscordNative: Attempt = async (fps, height, sourceId) => {
   try {
     const sources = await DiscordNative?.desktopCapture?.getDesktopCaptureSources?.({
       types: ["screen", "window"],

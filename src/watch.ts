@@ -1,4 +1,4 @@
-import { Logger } from "@utils/Logger";
+import { Logger } from "@runtime/logger";
 
 import { Beacon, HEARTBEAT_MS, isStale } from "./core/beacon";
 import { broadcast } from "./broadcast";

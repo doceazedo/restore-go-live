@@ -1,4 +1,4 @@
-import { Logger } from "@utils/Logger";
+import { Logger } from "@runtime/logger";
 
 import { Beacon, HEARTBEAT_MS } from "./core/beacon";
 import { newSessionId, streamKey } from "./core/session";

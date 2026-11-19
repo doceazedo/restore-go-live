@@ -1,12 +1,12 @@
-import { Logger } from "@utils/Logger";
-import { PluginNative } from "@utils/types";
+import { Logger } from "@runtime/logger";
+import { PluginNative } from "@runtime/plugin";
 
 const logger = new Logger("P2PShare:bridge");
 
 type Helpers = PluginNative<typeof import("./native")>;
 
 function helpers() {
-  return (VencordNative.pluginHelpers.RestoreGoLive ?? {}) as Record<
+  return (globalThis.RestoreGoLiveNative?.helpers ?? {}) as Record<
     string,
     (...args: any[]) => Promise<any>
   >;

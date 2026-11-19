@@ -1,8 +1,8 @@
-import { Logger } from "@utils/Logger";
-import { findByCodeLazy, findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
+import { Logger } from "@runtime/logger";
+import { findLazy, findStoreLazy } from "@runtime/webpack";
 import {
   ChannelStore, Constants, FluxDispatcher, LocaleStore, RestAPI, SelectedChannelStore, UserStore
-} from "@webpack/common";
+} from "@runtime/webpack/common";
 
 const announceLogger = new Logger("P2PShare:announce");
 

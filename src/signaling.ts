@@ -1,4 +1,4 @@
-import { Logger } from "@utils/Logger";
+import { Logger } from "@runtime/logger";
 
 import { Beacon, beaconMessage, decodeBeacon, isStale } from "./core/beacon";
 import { locale } from "./discord";

@@ -1,11 +1,11 @@
-import { Patch } from "@utils/types";
+import { Patch } from "@runtime/plugin";
 
 type PluginPatch = Omit<Patch, "plugin">;
 
 export const streamStartPatch: PluginPatch = {
   find: 'type:"STREAM_START"',
   replacement: {
-    match: /(function (\i)\((\i),(\i),(\i)\)\{)(\i\.\i\.dispatch\(\{type:"STREAM_START")/,
+    match: /(function(?: (\i))?\((\i),(\i),(\i)\)\{)(\i\.\i\.dispatch\(\{type:"STREAM_START")/,
     replace: "$1if($self.onStreamStart($3,$4,$5))return;$6"
   }
 };

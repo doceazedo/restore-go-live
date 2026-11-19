@@ -1,31 +1,13 @@
 import { execFileSync } from "child_process";
-import { existsSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const TSC = join(ROOT, "Vencord", "node_modules", ".bin", "tsc");
+const TSC = join(ROOT, "node_modules", "typescript", "bin", "tsc");
 
-if (!existsSync(TSC)) {
-  console.error(`tsc not found at ${TSC}, run pnpm setup first`);
-  process.exit(2);
-}
-
-let output = "";
 try {
-  output = execFileSync(TSC, ["--noEmit", "-p", "tsconfig.json"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  execFileSync(process.execPath, [TSC, "--noEmit", "-p", "tsconfig.json"], { cwd: ROOT, stdio: "inherit" });
+  console.log("typecheck clean");
 } catch (e) {
-  output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+  process.exit(e.status ?? 1);
 }
-
-const mine = output.split("\n").filter((l) => l.startsWith("src/"));
-if (mine.length) {
-  console.error(mine.join("\n"));
-  console.error(`\n${mine.length} error(s) in src/`);
-  process.exit(1);
-}
-console.log("typecheck clean");
