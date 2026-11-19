@@ -272,6 +272,7 @@ class Watcher {
 
     try {
       logger.info(`joining ${key}`);
+      announceVideo(session.ownerId, session.channelId, true);
       setJoinStage(key, JoinStage.PREPARING);
       const { pc, ready, sdp } = await createViewerOffer(
         this.ice,
@@ -336,6 +337,7 @@ class Watcher {
           .join("+")}`,
       );
     } catch (e) {
+      announceVideo(session.ownerId, session.channelId, false);
       session.pc?.close();
       session.pc = undefined;
       deleteOwn(session.channelId, session.offerMessageId);
