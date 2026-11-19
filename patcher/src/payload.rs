@@ -15,30 +15,34 @@ pub fn is_complete(dir: &Path) -> bool {
     missing(dir).is_empty()
 }
 
+pub fn write_files(dist: &Path, mut files: Vec<(String, Vec<u8>)>) -> Result<()> {
+    fs::create_dir_all(dist).with_context(|| format!("creating {}", dist.display()))?;
+    files.sort_by_key(|(name, _)| name == "main.js");
+
+    let mut staged = Vec::new();
+    for (name, bytes) in files {
+        let temp = dist.join(format!("{name}.rgl-new"));
+        fs::write(&temp, bytes).with_context(|| format!("writing {}", temp.display()))?;
+        staged.push((temp, dist.join(name)));
+    }
+    for (temp, target) in staged {
+        retry(&format!("replacing {}", target.display()), || fs::rename(&temp, &target))?;
+    }
+    Ok(())
+}
+
 pub fn install_from(source: &Path, dist: &Path) -> Result<()> {
     let absent = missing(source);
     if !absent.is_empty() {
         bail!("{} is missing {}", source.display(), absent.join(", "));
     }
-
-    fs::create_dir_all(dist).with_context(|| format!("creating {}", dist.display()))?;
-
-    let mut staged = Vec::new();
+    let mut files = Vec::new();
     for entry in fs::read_dir(source)? {
         let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
+        if entry.file_type()?.is_file() {
+            let bytes = fs::read(entry.path()).with_context(|| format!("reading {}", entry.path().display()))?;
+            files.push((entry.file_name().to_string_lossy().into_owned(), bytes));
         }
-        let name = entry.file_name();
-        let temp = dist.join(format!("{}.rgl-new", name.to_string_lossy()));
-        fs::copy(entry.path(), &temp).with_context(|| format!("copying {}", entry.path().display()))?;
-        staged.push((temp, dist.join(&name)));
     }
-
-    staged.sort_by_key(|(_, target)| target.file_name() == Some("main.js".as_ref()));
-
-    for (temp, target) in staged {
-        retry(&format!("replacing {}", target.display()), || fs::rename(&temp, &target))?;
-    }
-    Ok(())
+    write_files(dist, files)
 }

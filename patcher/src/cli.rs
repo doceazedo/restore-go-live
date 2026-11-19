@@ -1,17 +1,18 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context as _, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::Config;
 use crate::discord::{self, Branch, Install, Platform};
 use crate::patch::{self, State};
 use crate::paths::{Paths, DAEMON_EXE};
+use crate::update::{self, Fetch};
 use crate::{daemon, payload, system};
 
 #[derive(Parser, Debug)]
-#[command(name = "restore-go-live", version, about = "Keeps RestoreGoLive patched into Discord")]
+#[command(name = "restore-go-live", version = crate::daemon::BUILD_VERSION, about = "Keeps RestoreGoLive patched into Discord")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -38,6 +39,11 @@ pub enum Command {
         branch: Option<Target>,
         #[arg(long)]
         keep_data: bool,
+    },
+    #[command(about = "Update the payload and programs from the latest release")]
+    Update {
+        #[arg(long, help = "Only report what would be updated")]
+        check: bool,
     },
     #[command(about = "Run the background daemon in the foreground")]
     Daemon,
@@ -67,6 +73,7 @@ impl Target {
 pub struct Context {
     pub paths: Paths,
     pub platform: Box<dyn Platform>,
+    pub fetch: Box<dyn Fetch>,
 }
 
 impl Context {
@@ -74,7 +81,11 @@ impl Context {
         let Some(platform) = discord::Windows::from_env() else {
             bail!("LOCALAPPDATA is not set");
         };
-        Ok(Self { paths: Paths::from_env()?, platform: Box::new(platform) })
+        Ok(Self {
+            paths: Paths::from_env()?,
+            platform: Box::new(platform),
+            fetch: Box::new(update::Http::from_env()),
+        })
     }
 
     pub fn installs(&self) -> Vec<Install> {
@@ -88,6 +99,7 @@ impl Context {
 
 pub fn run(cli: Cli) -> Result<()> {
     let ctx = Context::from_env()?;
+    system::remove_stale_exes(&ctx.paths.bin);
     match cli.command.unwrap_or(Command::Status) {
         Command::Status => status(&ctx),
         Command::Install { branch, force, payload, no_daemon } => {
@@ -117,6 +129,11 @@ pub fn run(cli: Cli) -> Result<()> {
                 config.branches = remaining;
                 config.save(&ctx.paths.config())?;
             }
+            report.print();
+            report.into_result()
+        }
+        Command::Update { check } => {
+            let report = update(&ctx, check)?;
             report.print();
             report.into_result()
         }
@@ -187,12 +204,16 @@ pub fn setup_daemon(ctx: &Context, report: &mut Report) {
     let result = (|| -> Result<()> {
         let current = std::env::current_exe()?;
         let source_daemon = current.with_file_name(DAEMON_EXE);
-        if !source_daemon.is_file() {
-            bail!("{} not found next to {}", DAEMON_EXE, current.display());
-        }
         stop_daemon();
         copy_binary(&current, &ctx.paths.cli_exe())?;
-        copy_binary(&source_daemon, &ctx.paths.daemon_exe())?;
+        if source_daemon.is_file() {
+            copy_binary(&source_daemon, &ctx.paths.daemon_exe())?;
+        } else {
+            let manifest = update::fetch_manifest(ctx.fetch.as_ref())?;
+            let asset = update::require_binary(&manifest, DAEMON_EXE)?;
+            let staged = update::stage_binary(ctx.fetch.as_ref(), asset, &ctx.paths.daemon_exe())?;
+            patch::retry("installing the daemon", || fs::rename(&staged, ctx.paths.daemon_exe()))?;
+        }
         system::set_autostart(&ctx.paths.daemon_exe())?;
         system::spawn_detached(&ctx.paths.daemon_exe(), &[])?;
         Ok(())
@@ -292,16 +313,17 @@ pub fn install(ctx: &Context, target: Option<Target>, force: bool, source: Optio
     }
 
     let dist = ctx.paths.dist();
+    let mut report = Report::default();
     match source {
         Some(dir) => payload::install_from(&dir, &dist)?,
-        None if !payload::is_complete(&dist) => bail!(
-            "no payload in {}, pass --payload <dir> with main.js, preload.js and renderer.js",
-            dist.display()
-        ),
-        None => {}
+        None => match download_payload(ctx) {
+            Ok(line) => report.ok(line),
+            Err(e) if payload::is_complete(&dist) => {
+                report.ok(format!("could not check for a newer payload, keeping the installed one: {e:#}"))
+            }
+            Err(e) => return Err(e.context("downloading the payload")),
+        },
     }
-
-    let mut report = Report::default();
     report.ok(format!("payload ready in {}", dist.display()));
 
     let main_js = ctx.paths.main_js();
@@ -351,5 +373,78 @@ pub fn uninstall(ctx: &Context, target: Option<Target>, keep_data: bool) -> Resu
         report.ok(format!("removed {}", ctx.paths.data.display()));
     }
 
+    Ok(report)
+}
+
+fn download_payload(ctx: &Context) -> Result<String> {
+    let manifest = update::fetch_manifest(ctx.fetch.as_ref())?;
+    let names = update::sync_payload(ctx.fetch.as_ref(), &manifest, &ctx.paths.dist())?;
+    Ok(if names.is_empty() {
+        format!("payload already at {}", manifest.version)
+    } else {
+        format!("downloaded payload {} ({})", manifest.version, names.join(", "))
+    })
+}
+
+fn replace_installed(target: &std::path::Path, staged: &std::path::Path) -> Result<()> {
+    let running_self = std::env::current_exe().ok().is_some_and(|c| system::same_file(&c, target));
+    if running_self {
+        return system::replace_running_exe(target, staged).with_context(|| format!("replacing {}", target.display()));
+    }
+    patch::retry(&format!("replacing {}", target.display()), || fs::rename(staged, target))
+}
+
+pub fn update(ctx: &Context, check: bool) -> Result<Report> {
+    let mut report = Report::default();
+    let manifest = update::fetch_manifest(ctx.fetch.as_ref())?;
+    report.ok(format!("latest release {}", manifest.version));
+
+    let dist = ctx.paths.dist();
+    let outdated: Vec<String> = update::outdated_payload(&manifest, &dist)?
+        .into_iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    if outdated.is_empty() {
+        report.ok("payload up to date".into());
+    } else if check {
+        report.ok(format!("payload update available ({})", outdated.join(", ")));
+    } else {
+        let names = update::sync_payload(ctx.fetch.as_ref(), &manifest, &dist)?;
+        report.ok(format!("payload updated ({}), restart Discord to load it", names.join(", ")));
+    }
+
+    if !ctx.paths.daemon_exe().is_file() && !ctx.paths.cli_exe().is_file() {
+        report.ok("programs not installed, skipping them".into());
+        return Ok(report);
+    }
+    let binaries = update::outdated_binaries(&manifest, &ctx.paths.bin);
+    if binaries.is_empty() {
+        report.ok("programs up to date".into());
+        return Ok(report);
+    }
+    for (name, asset) in binaries {
+        if check {
+            report.ok(format!("{name} update available"));
+            continue;
+        }
+        let target = ctx.paths.bin.join(name);
+        let result = (|| -> Result<()> {
+            let staged = update::stage_binary(ctx.fetch.as_ref(), asset, &target)?;
+            if name == DAEMON_EXE {
+                let was_running = stop_daemon();
+                replace_installed(&target, &staged)?;
+                if was_running || system::autostart().is_some() {
+                    system::spawn_detached(&target, &[])?;
+                }
+            } else {
+                replace_installed(&target, &staged)?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => report.ok(format!("{name} updated")),
+            Err(e) => report.fail(format!("{name}: {e:#}")),
+        }
+    }
     Ok(report)
 }

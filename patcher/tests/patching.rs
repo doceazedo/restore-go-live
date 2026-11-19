@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rgl::cli::{self, Context, Target};
 use rgl::discord::{self, Branch, Platform};
@@ -8,6 +10,7 @@ use rgl::config::Config;
 use rgl::daemon::{stale_processes, Reconciler};
 use rgl::paths::Paths;
 use rgl::system::ProcessInfo;
+use rgl::update::{self, Asset, Fetch, Manifest};
 use tempfile::TempDir;
 
 const ORIGINAL: &[u8] = b"original discord asar";
@@ -22,11 +25,63 @@ impl Platform for Fake {
     }
 }
 
+#[derive(Clone, Default)]
+struct Release {
+    files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    fetched: Arc<Mutex<Vec<String>>>,
+}
+
+impl Fetch for Release {
+    fn fetch(&self, name: &str) -> anyhow::Result<Vec<u8>> {
+        self.fetched.lock().unwrap().push(name.to_string());
+        self.files
+            .lock()
+            .unwrap()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("404 {name}"))
+    }
+}
+
+impl Release {
+    fn publish(&self, version: &str, payload: &[(&str, &[u8])], binaries: &[(&str, &[u8])]) {
+        let mut files = self.files.lock().unwrap();
+        files.clear();
+        let mut manifest = Manifest {
+            version: version.into(),
+            commit: String::new(),
+            payload: Default::default(),
+            binaries: Default::default(),
+        };
+        for (name, bytes) in payload {
+            files.insert(name.to_string(), bytes.to_vec());
+            manifest
+                .payload
+                .insert(name.to_string(), Asset { asset: name.to_string(), sha256: update::sha256_hex(bytes) });
+        }
+        let mut target = std::collections::BTreeMap::new();
+        for (name, bytes) in binaries {
+            files.insert(name.to_string(), bytes.to_vec());
+            target.insert(name.to_string(), Asset { asset: name.to_string(), sha256: update::sha256_hex(bytes) });
+        }
+        if !target.is_empty() {
+            manifest.binaries.insert(update::TARGET.to_string(), target);
+        }
+        files.insert(update::MANIFEST.into(), serde_json::to_vec(&manifest).unwrap());
+        self.fetched.lock().unwrap().clear();
+    }
+
+    fn fetched(&self) -> Vec<String> {
+        self.fetched.lock().unwrap().clone()
+    }
+}
+
 struct Env {
     _tmp: TempDir,
     local: PathBuf,
     ctx: Context,
     payload_src: PathBuf,
+    release: Release,
 }
 
 fn app(root: &Path, version: &str) -> PathBuf {
@@ -58,10 +113,12 @@ fn env(branches: &[Branch]) -> Env {
         bin: local.join("RestoreGoLive"),
         legacy_dist: roaming.join("Vencord").join("dist"),
     };
+    let release = Release::default();
     Env {
         local,
         payload_src,
-        ctx: Context { paths, platform: Box::new(Fake { roots }) },
+        ctx: Context { paths, platform: Box::new(Fake { roots }), fetch: Box::new(release.clone()) },
+        release,
         _tmp: tmp,
     }
 }
@@ -247,7 +304,7 @@ fn install_selects_only_requested_branch() {
 }
 
 #[test]
-fn install_without_payload_fails_before_touching_discord() {
+fn install_without_payload_and_offline_fails_before_touching_discord() {
     let e = env(&[Branch::Canary]);
     assert!(cli::install(&e.ctx, Some(Target::Canary), false, None).is_err());
     assert_eq!(patch::classify(&newest(&e, Branch::Canary), &e.ctx.paths.legacy_dist), State::Unpatched);
@@ -419,4 +476,100 @@ fn relaunch_only_targets_processes_started_just_before_the_patch() {
         ProcessInfo { pid: 4, exe: dir.join("Discord.exe"), started: 1_050 },
     ];
     assert_eq!(stale_processes(&procs, &dir, 1_030), vec![1]);
+}
+
+const V1: [(&str, &[u8]); 3] = [("main.js", b"main v1"), ("preload.js", b"preload v1"), ("renderer.js", b"renderer v1")];
+
+#[test]
+fn install_downloads_payload_from_release() {
+    let e = env(&[Branch::Canary]);
+    e.release.publish("abc1234", &V1, &[]);
+    let report = cli::install(&e.ctx, Some(Target::Canary), false, None).unwrap();
+    assert!(report.failures.is_empty(), "{:?}", report.lines);
+    assert_eq!(fs::read(e.ctx.paths.dist().join("main.js")).unwrap(), b"main v1");
+    assert!(matches!(patch::classify(&newest(&e, Branch::Canary), &e.ctx.paths.legacy_dist), State::Patched { .. }));
+}
+
+#[test]
+fn install_offline_keeps_existing_payload() {
+    let e = env(&[Branch::Canary]);
+    rgl::payload::install_from(&e.payload_src, &e.ctx.paths.dist()).unwrap();
+    let report = cli::install(&e.ctx, Some(Target::Canary), false, None).unwrap();
+    assert!(report.failures.is_empty());
+    assert!(report.lines.iter().any(|l| l.contains("keeping the installed one")));
+}
+
+#[test]
+fn sync_only_downloads_changed_files() {
+    let e = env(&[Branch::Canary]);
+    let dist = e.ctx.paths.dist();
+    e.release.publish("v1", &V1, &[]);
+    let manifest = update::fetch_manifest(&e.release).unwrap();
+    assert_eq!(update::sync_payload(&e.release, &manifest, &dist).unwrap().len(), 3);
+
+    e.release.publish("v2", &[("main.js", b"main v1"), ("preload.js", b"preload v1"), ("renderer.js", b"renderer v2")], &[]);
+    let manifest = update::fetch_manifest(&e.release).unwrap();
+    assert_eq!(update::sync_payload(&e.release, &manifest, &dist).unwrap(), vec!["renderer.js".to_string()]);
+    assert_eq!(e.release.fetched(), vec![update::MANIFEST.to_string(), "renderer.js".to_string()]);
+    assert_eq!(fs::read(dist.join("renderer.js")).unwrap(), b"renderer v2");
+
+    let manifest = update::fetch_manifest(&e.release).unwrap();
+    assert!(update::sync_payload(&e.release, &manifest, &dist).unwrap().is_empty());
+}
+
+#[test]
+fn tampered_download_is_rejected_and_nothing_changes() {
+    let e = env(&[Branch::Canary]);
+    let dist = e.ctx.paths.dist();
+    e.release.publish("v1", &V1, &[]);
+    let manifest = update::fetch_manifest(&e.release).unwrap();
+    update::sync_payload(&e.release, &manifest, &dist).unwrap();
+
+    e.release.publish("v2", &[("main.js", b"main v2"), ("preload.js", b"preload v2"), ("renderer.js", b"renderer v1")], &[]);
+    let manifest = update::fetch_manifest(&e.release).unwrap();
+    e.release.files.lock().unwrap().insert("preload.js".into(), b"evil".to_vec());
+    let err = update::sync_payload(&e.release, &manifest, &dist).unwrap_err();
+    assert!(format!("{err:#}").contains("failed verification"));
+    assert_eq!(fs::read(dist.join("main.js")).unwrap(), b"main v1");
+    assert_eq!(fs::read(dist.join("preload.js")).unwrap(), b"preload v1");
+}
+
+#[test]
+fn manifest_without_required_payload_is_rejected() {
+    let e = env(&[Branch::Canary]);
+    e.release.publish("v1", &[("main.js", b"m")], &[]);
+    let manifest = update::fetch_manifest(&e.release).unwrap();
+    assert!(update::sync_payload(&e.release, &manifest, &e.ctx.paths.dist()).is_err());
+}
+
+#[test]
+fn detects_outdated_binaries() {
+    let e = env(&[Branch::Canary]);
+    let bin = &e.ctx.paths.bin;
+    fs::create_dir_all(bin).unwrap();
+    fs::write(bin.join("restore-go-live.exe"), b"cli v1").unwrap();
+    fs::write(bin.join("restore-go-live-daemon.exe"), b"daemon v1").unwrap();
+    e.release.publish("v2", &V1, &[("restore-go-live.exe", b"cli v1"), ("restore-go-live-daemon.exe", b"daemon v2")]);
+    let manifest = update::fetch_manifest(&e.release).unwrap();
+    let outdated: Vec<&str> = update::outdated_binaries(&manifest, bin).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(outdated, vec!["restore-go-live-daemon.exe"]);
+}
+
+#[test]
+fn update_check_reports_without_changing_anything() {
+    let e = env(&[Branch::Canary]);
+    rgl::payload::install_from(&e.payload_src, &e.ctx.paths.dist()).unwrap();
+    e.release.publish("v9", &V1, &[]);
+    let report = cli::update(&e.ctx, true).unwrap();
+    assert!(report.lines.iter().any(|l| l.contains("payload update available")));
+    assert_ne!(fs::read(e.ctx.paths.dist().join("main.js")).unwrap(), b"main v1");
+}
+
+#[test]
+fn update_applies_payload() {
+    let e = env(&[Branch::Canary]);
+    e.release.publish("v9", &V1, &[]);
+    let report = cli::update(&e.ctx, false).unwrap();
+    assert!(report.failures.is_empty(), "{:?}", report.lines);
+    assert_eq!(fs::read(e.ctx.paths.dist().join("renderer.js")).unwrap(), b"renderer v1");
 }

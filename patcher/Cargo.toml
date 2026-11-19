@@ -23,11 +23,14 @@ notify = "8.2.2"
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11.1"
 sysinfo = "0.40.4"
+ureq = "3.5.2"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
 winreg = "0.56.0"
 
 [dev-dependencies]
+anyhow = "1"
 tempfile = "3"
 
 [profile.release]

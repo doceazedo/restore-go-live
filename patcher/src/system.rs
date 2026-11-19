@@ -116,6 +116,32 @@ pub fn kill(pids: &[u32]) {
     }
 }
 
+pub fn replace_running_exe(target: &Path, staged: &Path) -> Result<()> {
+    let old = target.with_extension("exe.old");
+    if old.exists() {
+        let _ = std::fs::remove_file(&old);
+    }
+    let parked = if old.exists() { target.with_extension(format!("exe.{}.old", std::process::id())) } else { old };
+    std::fs::rename(target, &parked).with_context(|| format!("moving {} aside", target.display()))?;
+    if let Err(e) = std::fs::rename(staged, target) {
+        let _ = std::fs::rename(&parked, target);
+        return Err(e).with_context(|| format!("installing {}", target.display()));
+    }
+    Ok(())
+}
+
+pub fn remove_stale_exes(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name.ends_with(".old") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 fn stop_inheriting_std_handles() {
     use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
     use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};

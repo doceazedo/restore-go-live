@@ -11,11 +11,12 @@ use crate::discord::Branch;
 pub struct Config {
     pub branches: Vec<Branch>,
     pub relaunch_after_update: bool,
+    pub auto_update: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { branches: Vec::new(), relaunch_after_update: true }
+        Self { branches: Vec::new(), relaunch_after_update: true, auto_update: true }
     }
 }
 

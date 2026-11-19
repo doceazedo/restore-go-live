@@ -5,18 +5,22 @@ on:
     branches: [main]
     paths-ignore:
       - "README.md"
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +32,10 @@ jobs:
         with:
           node-version: 22
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: patcher
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -37,20 +45,36 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build desktop and browser extensions
+      - name: Build payload and browser extensions
         run: pnpm build
 
+      - name: Test patcher
+        run: cargo test --manifest-path patcher/Cargo.toml
+
+      - name: Lint patcher
+        run: cargo clippy --manifest-path patcher/Cargo.toml --all-targets -- -D warnings
+
+      - name: Build patcher
+        env:
+          RGL_VERSION: ${{ github.sha }}
+        run: cargo build --release --manifest-path patcher/Cargo.toml
+
       - name: Package release
-        run: node scripts/package-release.mjs
+        run: node scripts/package-release.mjs --require-binaries
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release/
 
       - name: Publish rolling release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest \
-            --title "RestoreGoLive $(git rev-parse --short=7 HEAD)" \
-            --notes "Automatic build of \`main\` (${{ github.sha }}).
+          short=$(git rev-parse --short=7 HEAD)
+          cat > notes.md <<EOF
+          Automatic build of \`main\` (${GITHUB_SHA}).
 
           Windows:
           \`\`\`powershell
@@ -60,5 +84,18 @@ jobs:
           macOS / Linux:
           \`\`\`sh
           curl -fsSL https://doce.sh/restore-go-live/install.sh | bash
-          \`\`\`" \
-            release/*
+          \`\`\`
+          EOF
+
+          if gh release view latest >/dev/null 2>&1; then
+            git tag -f latest
+            git push -f origin refs/tags/latest
+            gh release edit latest --title "RestoreGoLive ${short}" --notes-file notes.md --latest
+          else
+            gh release create latest --target "${GITHUB_SHA}" --title "RestoreGoLive ${short}" --notes-file notes.md --latest
+          fi
+
+          for asset in release/*; do
+            [ "$(basename "$asset")" = manifest.json ] || gh release upload latest "$asset" --clobber
+          done
+          gh release upload latest release/manifest.json --clobber

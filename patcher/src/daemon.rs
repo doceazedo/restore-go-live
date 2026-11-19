@@ -13,7 +13,9 @@ use crate::config::Config;
 use crate::discord::{Branch, Install};
 use crate::info;
 use crate::patch::{self, PatchAction, State};
+use crate::paths::{CLI_EXE, DAEMON_EXE};
 use crate::payload;
+use crate::update;
 use crate::system::{self, ProcessInfo};
 
 pub const MUTEX: &str = "Local\\RestoreGoLiveDaemon";
@@ -22,6 +24,17 @@ const HOT_TICK: Duration = Duration::from_secs(1);
 const HOT_WINDOW: Duration = Duration::from_secs(120);
 const SETTLE: Duration = Duration::from_secs(3);
 const RELAUNCH_WINDOW_SECS: u64 = 60;
+const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(20);
+const UPDATE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const UPDATE_RETRY: Duration = Duration::from_secs(30 * 60);
+pub const BUILD: &str = match option_env!("RGL_VERSION") {
+    Some(v) => v,
+    None => "dev",
+};
+pub const BUILD_VERSION: &str = match option_env!("RGL_VERSION") {
+    Some(v) => v,
+    None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
+};
 
 #[derive(Debug, Clone)]
 pub struct Patched {
@@ -169,12 +182,65 @@ fn watch_roots(ctx: &Context, watcher: &mut impl Watcher, watched: &mut HashSet<
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum UpdateOutcome {
+    Current,
+    Restart,
+}
+
+pub fn check_updates(ctx: &Context) -> Result<UpdateOutcome> {
+    let fetch = ctx.fetch.as_ref();
+    let manifest = update::fetch_manifest(fetch)?;
+    let names = update::sync_payload(fetch, &manifest, &ctx.paths.dist())?;
+    if !names.is_empty() {
+        info!("payload updated to {} ({}), loads on the next Discord launch", manifest.version, names.join(", "));
+    }
+
+    let installed = std::env::current_exe()
+        .ok()
+        .is_some_and(|c| system::same_file(&c, &ctx.paths.daemon_exe()));
+    if !installed {
+        return Ok(UpdateOutcome::Current);
+    }
+
+    let mut outcome = UpdateOutcome::Current;
+    let mut binaries = update::outdated_binaries(&manifest, &ctx.paths.bin);
+    binaries.sort_by_key(|(name, _)| *name == DAEMON_EXE);
+    for (name, asset) in binaries {
+        let target = ctx.paths.bin.join(name);
+        let staged = update::stage_binary(fetch, asset, &target)?;
+        if name == CLI_EXE {
+            match patch::retry("replacing the CLI", || fs::rename(&staged, &target)) {
+                Ok(()) => info!("{name} updated to {}", manifest.version),
+                Err(e) => {
+                    let _ = fs::remove_file(&staged);
+                    info!("{name}: {e:#}, trying again later");
+                }
+            }
+        } else {
+            system::replace_running_exe(&target, &staged)?;
+            info!("{name} updated to {}, restarting", manifest.version);
+            outcome = UpdateOutcome::Restart;
+        }
+    }
+    Ok(outcome)
+}
+
 pub fn run(ctx: Context) -> Result<()> {
-    let Some(_instance) = system::SingleInstance::acquire(MUTEX) else {
+    let mut instance = None;
+    for _ in 0..50 {
+        instance = system::SingleInstance::acquire(MUTEX);
+        if instance.is_some() || !std::env::args().any(|a| a == "--restarted") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    let Some(instance) = instance else {
         return Ok(());
     };
     crate::log::init(&ctx.paths.logs(), "daemon.log");
-    info!("daemon {} started", env!("CARGO_PKG_VERSION"));
+    info!("daemon {} ({BUILD}) started", env!("CARGO_PKG_VERSION"));
+    system::remove_stale_exes(&ctx.paths.bin);
 
     let (tx, rx) = mpsc::channel::<()>();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -185,6 +251,7 @@ pub fn run(ctx: Context) -> Result<()> {
     let mut watched = HashSet::new();
     let mut reconciler = Reconciler::default();
     let mut hot_until: Option<Instant> = None;
+    let mut next_update = Instant::now() + FIRST_UPDATE_CHECK;
 
     loop {
         watch_roots(&ctx, &mut watcher, &mut watched);
@@ -195,8 +262,24 @@ pub fn run(ctx: Context) -> Result<()> {
             }
         }
 
+        if config.auto_update && Instant::now() >= next_update {
+            match check_updates(&ctx) {
+                Ok(UpdateOutcome::Restart) => {
+                    drop(instance);
+                    system::spawn_detached(&ctx.paths.daemon_exe(), &["--restarted"])?;
+                    return Ok(());
+                }
+                Ok(UpdateOutcome::Current) => next_update = Instant::now() + UPDATE_INTERVAL,
+                Err(e) => {
+                    info!("update check failed: {e:#}");
+                    next_update = Instant::now() + UPDATE_RETRY;
+                }
+            }
+        }
+
         let hot = hot_until.is_some_and(|t| Instant::now() < t);
-        match rx.recv_timeout(if hot { HOT_TICK } else { SWEEP }) {
+        let until_update = next_update.saturating_duration_since(Instant::now()).max(HOT_TICK);
+        match rx.recv_timeout(if hot { HOT_TICK } else { SWEEP.min(until_update) }) {
             Ok(()) => {
                 while rx.try_recv().is_ok() {}
                 hot_until = Some(Instant::now() + HOT_WINDOW);

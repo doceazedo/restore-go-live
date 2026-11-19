@@ -7,3 +7,4 @@ pub mod patch;
 pub mod paths;
 pub mod payload;
 pub mod system;
+pub mod update;
