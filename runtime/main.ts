@@ -25,6 +25,15 @@ function trace(...parts: unknown[]) {
 
 trace(`starting from ${__dirname}, exe ${process.execPath}, argv ${JSON.stringify(process.argv.slice(1))}`);
 
+function signalLaunch() {
+  try {
+    const launch = { pid: process.pid, exe: process.execPath, at: Math.floor(Date.now() / 1000) };
+    writeFileSync(join(__dirname, "..", "launched.json"), JSON.stringify(launch));
+  } catch (e) {
+    trace("could not signal launch", e);
+  }
+}
+
 function readSettings(): Record<string, unknown> {
   try {
     return JSON.parse(readFileSync(SETTINGS, "utf8"));
@@ -247,6 +256,7 @@ for (const [name, step] of steps) {
   }
 }
 app.whenReady().then(installCsp, (e) => trace("csp failed", e));
+app.whenReady().then(signalLaunch);
 
 app.on("browser-window-created", (_, win) => {
   trace(`window created, preload ${win.webContents.session.getPreloads?.().length ?? "?"} session preloads`);

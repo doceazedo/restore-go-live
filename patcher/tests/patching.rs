@@ -7,7 +7,7 @@ use rgl::cli::{self, Context, Target};
 use rgl::discord::{self, Branch, Platform};
 use rgl::patch::{self, PatchAction, State, UnpatchAction};
 use rgl::config::Config;
-use rgl::daemon::{stale_processes, Reconciler};
+use rgl::daemon::{install_for, read_launch, stale_processes, Launch, Reconciler};
 use rgl::paths::Paths;
 use rgl::system::ProcessInfo;
 use rgl::update::{self, Asset, Fetch, Manifest};
@@ -476,6 +476,31 @@ fn relaunch_only_targets_processes_started_just_before_the_patch() {
         ProcessInfo { pid: 4, exe: dir.join("Discord.exe"), started: 1_050 },
     ];
     assert_eq!(stale_processes(&procs, &dir, 1_030), vec![1]);
+}
+
+#[test]
+fn reads_launch_signal_written_by_discord() {
+    let e = env(&[Branch::Canary]);
+    let signal = e.ctx.paths.launch_signal();
+    assert_eq!(read_launch(&signal), None);
+    fs::create_dir_all(&e.ctx.paths.data).unwrap();
+    fs::write(&signal, r#"{"pid":42,"exe":"C:\\Discord\\app-1.0.11\\Discord.exe","at":1000}"#).unwrap();
+    assert_eq!(
+        read_launch(&signal),
+        Some(Launch { pid: 42, exe: PathBuf::from(r"C:\Discord\app-1.0.11\Discord.exe"), at: 1000 })
+    );
+    fs::write(&signal, "{\"pid\":4").unwrap();
+    assert_eq!(read_launch(&signal), None);
+}
+
+#[test]
+fn launch_maps_to_the_install_it_came_from() {
+    let e = env(&[Branch::Stable, Branch::Canary]);
+    let installs = e.ctx.installs();
+    let canary = newest(&e, Branch::Canary);
+    let exe = canary.parent().unwrap().join("DiscordCanary.exe");
+    assert_eq!(install_for(&installs, &exe).map(|i| i.branch), Some(Branch::Canary));
+    assert!(install_for(&installs, Path::new(r"C:\elsewhere\Discord.exe")).is_none());
 }
 
 const V1: [(&str, &[u8]); 3] = [("main.js", b"main v1"), ("preload.js", b"preload v1"), ("renderer.js", b"renderer v1")];

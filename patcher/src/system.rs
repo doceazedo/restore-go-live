@@ -99,6 +99,15 @@ pub fn processes_named(file_name: &str) -> Vec<ProcessInfo> {
         .collect()
 }
 
+pub fn is_running(pid: u32) -> bool {
+    let Some(mut sys) = system() else {
+        return false;
+    };
+    let pid = sysinfo::Pid::from_u32(pid);
+    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    sys.process(pid).is_some()
+}
+
 pub fn kill(pids: &[u32]) {
     let Some(mut sys) = system() else {
         return;

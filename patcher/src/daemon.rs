@@ -7,6 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use notify::{RecursiveMode, Watcher};
+use serde::Deserialize;
 
 use crate::cli::Context;
 use crate::config::Config;
@@ -27,6 +28,8 @@ const RELAUNCH_WINDOW_SECS: u64 = 60;
 const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(20);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const UPDATE_RETRY: Duration = Duration::from_secs(30 * 60);
+const LAUNCH_RECHECK: Duration = Duration::from_secs(120);
+const STARTUP_LAUNCH_SECS: u64 = 60;
 pub const VERSION: &str = match option_env!("RGL_VERSION") {
     Some(v) => v,
     None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
@@ -118,6 +121,10 @@ pub fn stale_processes(procs: &[ProcessInfo], app_dir: &Path, patched_at: u64) -
         .collect()
 }
 
+fn in_app_dir(p: &ProcessInfo, app_dir: &Path) -> bool {
+    p.exe.parent().is_some_and(|d| system::same_file(d, app_dir))
+}
+
 fn relaunch_if_needed(patched: &Patched) {
     if patched.action != PatchAction::Patched {
         return;
@@ -127,32 +134,38 @@ fn relaunch_if_needed(patched: &Patched) {
     };
     let branch: Branch = patched.install.branch;
     let procs = system::processes_named(branch.executable());
-    let stale = stale_processes(&procs, app_dir, patched.at);
-    if stale.is_empty() {
-        let running = procs.iter().any(|p| p.exe.parent().is_some_and(|d| system::same_file(d, app_dir)));
-        if running {
+    if stale_processes(&procs, app_dir, patched.at).is_empty() {
+        if procs.iter().any(|p| in_app_dir(p, app_dir)) {
             info!("{branch}: running unpatched for a while, the mod loads on its next launch");
         }
         return;
     }
 
     info!("{branch}: started unpatched right after its update, restarting it");
-    let all: Vec<u32> = procs
+    restart_discord(&patched.install);
+}
+
+fn restart_discord(install: &Install) {
+    let branch = install.branch;
+    let Some(app_dir) = install.resources.parent() else {
+        return;
+    };
+    let running: Vec<u32> = system::processes_named(branch.executable())
         .iter()
-        .filter(|p| p.exe.parent().is_some_and(|d| system::same_file(d, app_dir)))
+        .filter(|p| in_app_dir(p, app_dir))
         .map(|p| p.pid)
         .collect();
-    system::kill(&all);
+    if running.is_empty() {
+        return;
+    }
+    system::kill(&running);
     for _ in 0..20 {
         thread::sleep(Duration::from_millis(250));
-        if system::processes_named(branch.executable())
-            .iter()
-            .all(|p| !p.exe.parent().is_some_and(|d| system::same_file(d, app_dir)))
-        {
+        if !system::processes_named(branch.executable()).iter().any(|p| in_app_dir(p, app_dir)) {
             break;
         }
     }
-    let updater = patched.install.root.join("Update.exe");
+    let updater = install.root.join("Update.exe");
     let result = if updater.is_file() {
         system::spawn_detached(&updater, &["--processStart", branch.executable()])
     } else {
@@ -161,6 +174,38 @@ fn relaunch_if_needed(patched: &Patched) {
     if let Err(e) = result {
         info!("{branch}: could not restart: {e:#}");
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Launch {
+    pub pid: u32,
+    pub exe: PathBuf,
+    pub at: u64,
+}
+
+pub fn read_launch(path: &Path) -> Option<Launch> {
+    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+}
+
+pub fn install_for<'a>(installs: &'a [Install], exe: &Path) -> Option<&'a Install> {
+    let dir = exe.parent()?;
+    installs
+        .iter()
+        .find(|i| i.resources.parent().is_some_and(|d| system::same_file(d, dir)))
+}
+
+fn restart_launched(ctx: &Context, launch: &Launch) {
+    if !system::is_running(launch.pid) {
+        info!("the update loads on the next Discord launch");
+        return;
+    }
+    let installs = ctx.installs();
+    let Some(install) = install_for(&installs, &launch.exe) else {
+        info!("{} is not a known Discord install, not restarting it", launch.exe.display());
+        return;
+    };
+    info!("{}: restarting to load the update", install.branch);
+    restart_discord(install);
 }
 
 fn watch_roots(ctx: &Context, watcher: &mut impl Watcher, watched: &mut HashSet<PathBuf>) {
@@ -178,28 +223,28 @@ fn watch_roots(ctx: &Context, watcher: &mut impl Watcher, watched: &mut HashSet<
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum UpdateOutcome {
-    Current,
-    Restart,
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct UpdateOutcome {
+    pub payload_updated: bool,
+    pub daemon_replaced: bool,
 }
 
 pub fn check_updates(ctx: &Context) -> Result<UpdateOutcome> {
     let fetch = ctx.fetch.as_ref();
     let manifest = update::fetch_manifest(fetch)?;
     let names = update::sync_payload(fetch, &manifest, &ctx.paths.dist())?;
-    if !names.is_empty() {
-        info!("payload updated to {} ({}), loads on the next Discord launch", manifest.version, names.join(", "));
+    let mut outcome = UpdateOutcome { payload_updated: !names.is_empty(), daemon_replaced: false };
+    if outcome.payload_updated {
+        info!("payload updated to {} ({})", manifest.version, names.join(", "));
     }
 
     let installed = std::env::current_exe()
         .ok()
         .is_some_and(|c| system::same_file(&c, &ctx.paths.daemon_exe()));
     if !installed {
-        return Ok(UpdateOutcome::Current);
+        return Ok(outcome);
     }
 
-    let mut outcome = UpdateOutcome::Current;
     let mut binaries = update::outdated_binaries(&manifest, &ctx.paths.bin);
     binaries.sort_by_key(|(name, _)| *name == DAEMON_EXE);
     for (name, asset) in binaries {
@@ -216,7 +261,7 @@ pub fn check_updates(ctx: &Context) -> Result<UpdateOutcome> {
         } else {
             system::replace_running_exe(&target, &staged)?;
             info!("{name} updated to {}, restarting", manifest.version);
-            outcome = UpdateOutcome::Restart;
+            outcome.daemon_replaced = true;
         }
     }
     Ok(outcome)
@@ -238,16 +283,27 @@ pub fn run(ctx: Context) -> Result<()> {
     info!("daemon {VERSION} started");
     system::remove_stale_exes(&ctx.paths.bin);
 
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<Vec<PathBuf>>();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if event.is_ok() {
-            let _ = tx.send(());
+        if let Ok(event) = event {
+            let _ = tx.send(event.paths);
         }
     })?;
     let mut watched = HashSet::new();
     let mut reconciler = Reconciler::default();
     let mut hot_until: Option<Instant> = None;
     let mut next_update = Instant::now() + FIRST_UPDATE_CHECK;
+
+    let signal = ctx.paths.launch_signal();
+    let _ = fs::create_dir_all(&ctx.paths.data);
+    if let Err(e) = watcher.watch(&ctx.paths.data, RecursiveMode::NonRecursive) {
+        info!("cannot watch {}: {e}, updates will not be checked on launch", ctx.paths.data.display());
+    }
+    let mut seen_launch = read_launch(&signal);
+    let mut pending_launch = seen_launch
+        .clone()
+        .filter(|l| system::now_secs().saturating_sub(l.at) <= STARTUP_LAUNCH_SECS);
+    let mut last_check: Option<Instant> = None;
 
     loop {
         watch_roots(&ctx, &mut watcher, &mut watched);
@@ -258,14 +314,28 @@ pub fn run(ctx: Context) -> Result<()> {
             }
         }
 
-        if config.auto_update && Instant::now() >= next_update {
+        let recently_checked = last_check.is_some_and(|t| t.elapsed() < LAUNCH_RECHECK);
+        let launch = pending_launch.take().filter(|_| config.auto_update && !recently_checked);
+        if config.auto_update && (launch.is_some() || Instant::now() >= next_update) {
+            if let Some(l) = &launch {
+                info!("Discord opened ({}), checking for updates", l.exe.display());
+            }
+            last_check = Some(Instant::now());
             match check_updates(&ctx) {
-                Ok(UpdateOutcome::Restart) => {
-                    drop(instance);
-                    system::spawn_detached(&ctx.paths.daemon_exe(), &["--restarted"])?;
-                    return Ok(());
+                Ok(outcome) => {
+                    if outcome.payload_updated {
+                        match &launch {
+                            Some(l) => restart_launched(&ctx, l),
+                            None => info!("the update loads on the next Discord launch"),
+                        }
+                    }
+                    if outcome.daemon_replaced {
+                        drop(instance);
+                        system::spawn_detached(&ctx.paths.daemon_exe(), &["--restarted"])?;
+                        return Ok(());
+                    }
+                    next_update = Instant::now() + UPDATE_INTERVAL;
                 }
-                Ok(UpdateOutcome::Current) => next_update = Instant::now() + UPDATE_INTERVAL,
                 Err(e) => {
                     info!("update check failed: {e:#}");
                     next_update = Instant::now() + UPDATE_RETRY;
@@ -276,9 +346,22 @@ pub fn run(ctx: Context) -> Result<()> {
         let hot = hot_until.is_some_and(|t| Instant::now() < t);
         let until_update = next_update.saturating_duration_since(Instant::now()).max(HOT_TICK);
         match rx.recv_timeout(if hot { HOT_TICK } else { SWEEP.min(until_update) }) {
-            Ok(()) => {
-                while rx.try_recv().is_ok() {}
-                hot_until = Some(Instant::now() + HOT_WINDOW);
+            Ok(first) => {
+                let mut paths = first;
+                while let Ok(more) = rx.try_recv() {
+                    paths.extend(more);
+                }
+                let (launches, others): (Vec<PathBuf>, Vec<PathBuf>) =
+                    paths.into_iter().partition(|p| p.file_name() == signal.file_name());
+                if !launches.is_empty() {
+                    if let Some(l) = read_launch(&signal).filter(|l| seen_launch.as_ref() != Some(l)) {
+                        seen_launch = Some(l.clone());
+                        pending_launch = Some(l);
+                    }
+                }
+                if others.iter().any(|p| !p.starts_with(&ctx.paths.data)) {
+                    hot_until = Some(Instant::now() + HOT_WINDOW);
+                }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),

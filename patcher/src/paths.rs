@@ -40,6 +40,10 @@ impl Paths {
         self.data.join("state.json")
     }
 
+    pub fn launch_signal(&self) -> PathBuf {
+        self.data.join("launched.json")
+    }
+
     pub fn logs(&self) -> PathBuf {
         self.data.join("logs")
     }
