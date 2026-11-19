@@ -1,8 +1,3 @@
-export function newSessionId() {
-  const bytes = crypto.getRandomValues(new Uint8Array(4));
-  return [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
 export function streamKey(guildId: string | null, channelId: string, ownerId: string) {
   return guildId ? `guild:${guildId}:${channelId}:${ownerId}` : `call:${channelId}:${ownerId}`;
 }

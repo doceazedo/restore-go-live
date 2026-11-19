@@ -77,7 +77,6 @@ export async function diag() {
     voiceChannelId: vc,
     broadcasting: broadcast.active,
     beaconMessageId: broadcast.beaconMessageId,
-    broadcastSession: broadcast.sessionId,
     broadcastAudio: broadcast.hasAudio,
     broadcastStream: describeStream(broadcast.stream),
     goLiveSource: goLiveSource(),

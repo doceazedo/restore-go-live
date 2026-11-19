@@ -1,7 +1,7 @@
 import { Logger } from "@runtime/logger";
 
 import { Beacon, HEARTBEAT_MS } from "./core/beacon";
-import { newSessionId, streamKey } from "./core/session";
+import { streamKey } from "./core/session";
 import { captureScreen } from "./capture";
 import {
   addInterceptor, announceStream, announceVideo, currentUserId, dispatch, guildIdOf,
@@ -29,7 +29,6 @@ interface Viewer {
 }
 
 class Broadcast {
-  sessionId = "";
   channelId = "";
   guildId: string | null = null;
   stream: MediaStream | null = null;
@@ -57,7 +56,6 @@ class Broadcast {
     this.opts = opts;
     this.channelId = channelId;
     this.guildId = guildIdOf(channelId);
-    this.sessionId = newSessionId();
 
     const { height, fps } = streamQuality();
     logger.info(`capturing at ${height}p ${fps}fps from discord settings`);
@@ -108,12 +106,11 @@ class Broadcast {
 
     this.announceSelf(true);
     void trackViewers(this.key!, currentUserId(), channelId, this.beaconMessageId!, true);
-    logger.info(`live session=${this.sessionId} audio=${this.hasAudio} channel=${channelId}`);
+    logger.info(`live beacon=${this.beaconMessageId} audio=${this.hasAudio} channel=${channelId}`);
   }
 
   private beacon(): Beacon {
     return {
-      sessionId: this.sessionId,
       startedAt: this.startedAt,
       heartbeat: Date.now(),
       hasAudio: this.hasAudio
@@ -122,7 +119,6 @@ class Broadcast {
 
   private async onOffer(h: Handshake, msg: any) {
     if (!this.stream || !this.opts) return;
-    if (h.s !== this.sessionId) return;
 
     const viewerId: string = msg.author?.id;
     if (!viewerId) return;
@@ -140,7 +136,7 @@ class Broadcast {
       throw e;
     }
     const { pc, sdp } = answered;
-    const answerId = await sendAnswer(this.channelId, { s: this.sessionId, sdp }, msg.id);
+    const answerId = await sendAnswer(this.channelId, { sdp }, msg.id);
     if (answerId) deleteWhenPeerGone(this.channelId, answerId, msg.id);
 
     const ok = await waitConnected(pc);
@@ -168,7 +164,7 @@ class Broadcast {
       dispatch({
         type: "STREAM_CREATE",
         streamKey: key,
-        rtcServerId: `p2p-${this.sessionId}`,
+        rtcServerId: `p2p-${this.beaconMessageId}`,
         rtcChannelId: this.channelId,
         region: "p2p",
         viewerIds: []
@@ -229,7 +225,6 @@ class Broadcast {
     this.heartbeatTimer = null;
     if (this.beaconMessageId) await clearBeacon(this.channelId, this.beaconMessageId);
     this.beaconMessageId = null;
-    this.sessionId = "";
     this.stopping = false;
     logger.info("broadcast stopped");
   }

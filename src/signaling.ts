@@ -15,7 +15,6 @@ const ANSWER = "p2pa";
 const DELETE_FALLBACK_MS = 60000;
 
 export interface Handshake {
-  s: string;
   sdp: string;
 }
 
@@ -93,7 +92,7 @@ export function watchBeacons(
 
 async function post(channelId: string, prefix: string, h: Handshake, replyToId: string) {
   const body = await packPayload(h);
-  const filename = `${prefix}.${h.s}.txt`;
+  const filename = `${prefix}.txt`;
   logger.info(`uploading ${filename} (${body.length} chars)`);
   return uploadText(channelId, filename, body, replyToId);
 }
@@ -167,7 +166,7 @@ function listen(
     fetchText(att.url)
       .then(body => unpackPayload<Handshake>(body))
       .then(h => {
-        if (!h?.sdp || !h.s) {
+        if (!h?.sdp) {
           logger.warn(`could not decode ${att.filename}`);
           return;
         }

@@ -176,7 +176,7 @@ class Watcher {
     const key = streamKey(guildIdOf(channelId), channelId, ownerId);
     const existing = this.sessions.get(key);
 
-    if (existing?.beacon.sessionId === beacon.sessionId) {
+    if (existing?.messageId === messageId) {
       existing.beacon = beacon;
       return;
     }
@@ -197,7 +197,7 @@ class Watcher {
       if (found.includes(currentUserId())) void markWatching(channelId, messageId, false);
     });
     logger.info(
-      `${ownerId} is live (session ${beacon.sessionId}, audio=${beacon.hasAudio})`,
+      `${ownerId} is live (beacon ${messageId}, audio=${beacon.hasAudio})`,
     );
   }
 
@@ -292,11 +292,7 @@ class Watcher {
           session.channelId,
           () => session.offerMessageId ?? null,
           (h, msg) => {
-            if (
-              msg.author?.id !== session.ownerId ||
-              h.s !== session.beacon.sessionId
-            )
-              return;
+            if (msg.author?.id !== session.ownerId) return;
             clearTimeout(timer);
             stop();
             resolve(h.sdp);
@@ -307,7 +303,7 @@ class Watcher {
       setJoinStage(key, JoinStage.REQUESTING);
       session.offerMessageId = await sendOffer(
         session.channelId,
-        { s: session.beacon.sessionId, sdp },
+        { sdp },
         session.messageId,
       );
 
