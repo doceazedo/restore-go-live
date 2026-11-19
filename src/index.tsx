@@ -24,6 +24,7 @@ import {
 import { scanBeacons } from "./signaling";
 import { goLiveSource, watchGoLiveSource } from "./source";
 import { IceConfig } from "./peers";
+import { shorten } from "./core/text";
 import { JoinStatus } from "./status";
 import {
   browserVideoSourcePatch,
@@ -161,7 +162,7 @@ export default definePlugin({
       })
       .catch((e) => {
         logger.error("failed to start", e);
-        toast(`P2P stream failed: ${e.message}`, Toasts.Type.FAILURE);
+        toast(`stream failed: ${shorten(e.message, 36)}`, Toasts.Type.FAILURE);
       });
 
     return true;
@@ -171,7 +172,7 @@ export default definePlugin({
     if (!watcher.isOurs(key)) return false;
     watcher.join(key).catch((e) => {
       logger.error("failed to join", e);
-      toast(`Could not connect: ${e.message}`, Toasts.Type.FAILURE);
+      toast(`can't join: ${shorten(e.message, 36)}`, Toasts.Type.FAILURE);
     });
     return false;
   },

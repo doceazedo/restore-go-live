@@ -106,7 +106,8 @@ class Broadcast {
       try {
         this.beaconMessageId = await publishBeacon(channelId, this.beacon());
       } catch (e) {
-        throw new Error(`could not post beacon: ${(e as Error).message}`);
+        logger.warn("could not post beacon", e);
+        throw new Error("can't post to chat");
       }
       this.ensureNotCancelled();
     } catch (e) {

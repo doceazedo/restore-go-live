@@ -4,6 +4,7 @@ import { appAudioTrack, systemAudioTrack } from "./appaudio";
 import { loopbackTrack } from "./audio";
 import { Native } from "./bridge";
 import { electronSourceId, matchSource, sameSource, sourceParts } from "./core/sources";
+import { shorten } from "./core/text";
 import { GoLiveSource } from "./source";
 
 const logger = new Logger("P2PShare:capture");
@@ -196,9 +197,13 @@ export async function captureScreen(
     captured = null;
   }
   if (!captured && source.id) {
-    throw new Error(`could not capture ${source.name ?? source.id}, nothing else was shared`);
+    logger.warn(`could not capture ${source.name ?? source.id}, nothing else was shared`);
+    throw new Error(`can't capture ${shorten(source.name ?? "window", 24)}`);
   }
-  if (!captured) throw new Error("no screen capture API available");
+  if (!captured) {
+    logger.warn("no screen capture API available");
+    throw new Error("can't capture screen");
+  }
 
   const { stream, via } = captured;
   const { track, audioVia } = await resolveAudio(stream, wantAudio, audioPreference, source.id);

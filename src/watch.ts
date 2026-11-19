@@ -288,7 +288,8 @@ class Watcher {
       const answered = new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
           stop();
-          reject(new Error("broadcaster did not answer"));
+          logger.warn("broadcaster did not answer");
+          reject(new Error("streamer didn't answer"));
         }, 30000);
         const stop = watchAnswers(
           session.channelId,
@@ -317,9 +318,8 @@ class Watcher {
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
       if (!(await waitConnected(pc))) {
-        throw new Error(
-          "no direct route to broadcaster, run __p2p.nat() on both peers",
-        );
+        logger.warn("no direct route to broadcaster, run __p2p.nat() on both peers");
+        throw new Error("no direct route");
       }
 
       logger.info(`connected via ${await selectedPair(pc)}`);
