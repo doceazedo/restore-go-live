@@ -67,7 +67,7 @@ jobs:
           name: release
           path: release/
 
-      - name: Publish rolling release
+      - name: Publish release
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,15 +87,8 @@ jobs:
           \`\`\`
           EOF
 
-          if gh release view latest >/dev/null 2>&1; then
-            git tag -f latest
-            git push -f origin refs/tags/latest
-            gh release edit latest --title "RestoreGoLive ${short}" --notes-file notes.md --latest
-          else
-            gh release create latest --target "${GITHUB_SHA}" --title "RestoreGoLive ${short}" --notes-file notes.md --latest
+          if gh release view "${short}" >/dev/null 2>&1; then
+            gh release delete "${short}" --cleanup-tag --yes
           fi
 
-          for asset in release/*; do
-            [ "$(basename "$asset")" = manifest.json ] || gh release upload latest "$asset" --clobber
-          done
-          gh release upload latest release/manifest.json --clobber
+          gh release create "${short}" release/* --target "${GITHUB_SHA}" --title "RestoreGoLive ${short}" --notes-file notes.md --latest
