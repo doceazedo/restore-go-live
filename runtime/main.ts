@@ -174,7 +174,7 @@ if (require("fs").existsSync(target)) {
   try {
     const logs = path.join(path.dirname(target), "..", "logs");
     require("fs").mkdirSync(logs, { recursive: true });
-    require("fs").appendFileSync(path.join(logs, "main.log"), message + "\n");
+    require("fs").appendFileSync(path.join(logs, "main.log"), message + "\\n");
   } catch {}
   const original = path.join(__dirname, "..", "_app.asar");
   const pkg = require(path.join(original, "package.json"));
