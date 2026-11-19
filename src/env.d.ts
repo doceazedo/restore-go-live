@@ -4,6 +4,7 @@ declare global {
   var RestoreGoLiveNative:
     | {
         helpers: Record<string, (...args: any[]) => Promise<any>>;
+        log?(line: string): void;
         settings: {
           get(): Record<string, unknown>;
           set(values: Record<string, unknown>): Promise<void>;

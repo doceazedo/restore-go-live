@@ -11,6 +11,7 @@ const helpers = Object.fromEntries(
 
 contextBridge.exposeInMainWorld("RestoreGoLiveNative", {
   helpers,
+  log: (line: string) => ipcRenderer.send(`${PREFIX}:log`, line),
   settings: {
     get: () => ipcRenderer.sendSync(`${PREFIX}:settings:get`),
     set: (values: Record<string, unknown>) => ipcRenderer.invoke(`${PREFIX}:settings:set`, values),

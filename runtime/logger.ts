@@ -1,3 +1,25 @@
+function describe(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Error || (value && typeof value === "object" && "name" in value && "message" in value)) {
+    const err = value as Error;
+    const head = `${err.name}: ${err.message}`;
+    return err.stack?.includes(err.message) ? err.stack : `${head}${err.stack ? `\n${err.stack}` : ""}`;
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function persist(level: string, name: string, args: any[]) {
+  try {
+    const sink = (globalThis as any).RestoreGoLiveNative?.log;
+    if (typeof sink !== "function") return;
+    sink(`[${level}] [${name}] ${args.map(describe).join(" ")}`);
+  } catch {}
+}
+
 export class Logger {
   constructor(public name: string, public color = "#a6d189") {}
 
@@ -8,6 +30,7 @@ export class Logger {
       `background:${this.color};color:#000`,
       ...args,
     );
+    persist(level, this.name, args);
   }
 
   info(...args: any[]) {

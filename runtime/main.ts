@@ -1,6 +1,6 @@
 import electron, { app, BrowserWindowConstructorOptions, ipcMain, session, webContents } from "electron";
 import EventEmitter from "events";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, watch, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
 
 import * as native from "../src/native";
@@ -11,6 +11,17 @@ const injector = require.main!.filename;
 const asarPath = join(dirname(injector), "..", "_app.asar");
 
 const LOG_DIR = join(__dirname, "..", "logs");
+const RENDERER_LOG = join(LOG_DIR, "renderer.log");
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
+
+function rotateLog(file: string) {
+  try {
+    if (statSync(file).size > MAX_LOG_BYTES) renameSync(file, `${file}.old`);
+  } catch {}
+}
+
+rotateLog(join(LOG_DIR, "main.log"));
+rotateLog(RENDERER_LOG);
 
 function trace(...parts: unknown[]) {
   const line = `[${new Date().toISOString()}] [${process.pid}] ${parts
@@ -61,6 +72,13 @@ function registerIpc() {
     event.returnValue = readSettings();
   });
   ipcMain.handle(`${PREFIX}:settings:set`, (_, values: Record<string, unknown>) => writeSettings(values));
+  ipcMain.on(`${PREFIX}:log`, (_, line: unknown) => {
+    if (typeof line !== "string") return;
+    try {
+      mkdirSync(LOG_DIR, { recursive: true });
+      appendFileSync(RENDERER_LOG, `[${new Date().toISOString()}] ${line.slice(0, 20000)}\n`);
+    } catch {}
+  });
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const broadcast = () => {
