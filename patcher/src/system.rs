@@ -1,6 +1,4 @@
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -10,9 +8,6 @@ use winreg::RegKey;
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "RestoreGoLive";
-const DETACHED_PROCESS: u32 = 0x0000_0008;
-const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct SingleInstance(windows_sys::Win32::Foundation::HANDLE);
 
@@ -142,30 +137,59 @@ pub fn remove_stale_exes(dir: &Path) {
     }
 }
 
-fn stop_inheriting_std_handles() {
-    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
-    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    value.encode_wide().chain(std::iter::once(0)).collect()
+}
 
-    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-        unsafe {
-            let handle = GetStdHandle(which);
-            if !handle.is_null() {
-                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
-            }
+pub fn command_line(exe: &Path, args: &[&str]) -> String {
+    let mut line = format!("\"{}\"", exe.display());
+    for arg in args {
+        line.push(' ');
+        if arg.is_empty() || arg.contains([' ', '\t']) {
+            line.push_str(&format!("\"{arg}\""));
+        } else {
+            line.push_str(arg);
         }
     }
+    line
 }
 
 pub fn spawn_detached(exe: &Path, args: &[&str]) -> Result<()> {
-    stop_inheriting_std_handles();
-    Command::new(exe)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
-        .spawn()
-        .with_context(|| format!("starting {}", exe.display()))?;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS, PROCESS_INFORMATION,
+        STARTUPINFOW,
+    };
+
+    let application = wide(exe.as_os_str());
+    let mut line = wide(std::ffi::OsStr::new(&command_line(exe, args)));
+    let directory = exe.parent().map(|p| wide(p.as_os_str()));
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+
+    let ok = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            line.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+            std::ptr::null(),
+            directory.as_ref().map_or(std::ptr::null(), |d| d.as_ptr()),
+            &startup,
+            &mut info,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error()).with_context(|| format!("starting {}", exe.display()));
+    }
+    unsafe {
+        CloseHandle(info.hProcess);
+        CloseHandle(info.hThread);
+    }
     Ok(())
 }
 

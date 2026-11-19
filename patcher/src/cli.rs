@@ -372,6 +372,12 @@ pub fn uninstall(ctx: &Context, target: Option<Target>, keep_data: bool) -> Resu
         fs::remove_dir_all(&ctx.paths.data)?;
         report.ok(format!("removed {}", ctx.paths.data.display()));
     }
+    let still_legacy = ctx.installs().iter().any(|i| ctx.state(i) == State::Legacy);
+    if report.failures.is_empty() && !still_legacy {
+        for removed in patch::cleanup_legacy_dist(&ctx.paths.legacy_dist)? {
+            report.ok(format!("removed old build {}", removed.display()));
+        }
+    }
 
     Ok(report)
 }

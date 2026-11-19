@@ -573,3 +573,20 @@ fn update_applies_payload() {
     assert!(report.failures.is_empty(), "{:?}", report.lines);
     assert_eq!(fs::read(e.ctx.paths.dist().join("renderer.js")).unwrap(), b"renderer v1");
 }
+
+#[test]
+fn uninstall_restores_old_vencord_based_install_and_removes_its_build() {
+    let e = env(&[Branch::Canary]);
+    let res = legacy_install(&e, Branch::Canary);
+    let report = cli::uninstall(&e.ctx, None, false).unwrap();
+    assert!(report.failures.is_empty(), "{:?}", report.lines);
+    assert_eq!(fs::read(res.join("app.asar")).unwrap(), ORIGINAL);
+    assert!(!e.ctx.paths.legacy_dist.join("patcher.js").exists());
+    assert!(e.ctx.paths.legacy_dist.join("vencordDesktopMain.js").exists());
+}
+
+#[test]
+fn detached_command_line_quotes_paths_and_spaced_args() {
+    let line = rgl::system::command_line(Path::new(r"C:\Users\some one\Update.exe"), &["--processStart", "Discord.exe", "a b"]);
+    assert_eq!(line, r#""C:\Users\some one\Update.exe" --processStart Discord.exe "a b""#);
+}

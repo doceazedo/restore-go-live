@@ -1,111 +1,95 @@
-$ErrorActionPreference = "Stop"
+function Install-RestoreGoLive {
+    $ErrorActionPreference = "Stop"
+    $ProgressPreference = "SilentlyContinue"
 
-$repo = if ($env:P2P_REPO) { $env:P2P_REPO } else { "doceazedo/restore-go-live" }
-$baseUrl = if ($env:P2P_BASE_URL) { $env:P2P_BASE_URL } else { "https://github.com/$repo/releases/latest/download" }
-$branch = $env:P2P_DISCORD_BRANCH
-$files = @("patcher.js", "preload.js", "renderer.js", "renderer.css")
+    $repo = if ($env:P2P_REPO) { $env:P2P_REPO } else { "doceazedo/restore-go-live" }
+    $baseUrl = if ($env:RGL_RELEASE_URL) { $env:RGL_RELEASE_URL } elseif ($env:P2P_BASE_URL) { $env:P2P_BASE_URL } else { "https://github.com/$repo/releases/latest/download" }
+    $branch = $env:P2P_DISCORD_BRANCH
+    $assumeYes = $env:P2P_YES -eq "1"
 
-$data = Join-Path $env:APPDATA "Vencord"
-$distDir = Join-Path $data "dist"
-
-$branchDirs = [ordered]@{
-    stable = "Discord"
-    ptb    = "DiscordPTB"
-    canary = "DiscordCanary"
-}
-
-$found = [ordered]@{}
-foreach ($label in $branchDirs.Keys) {
-    $root = Join-Path $env:LOCALAPPDATA $branchDirs[$label]
-    if (-not (Test-Path $root)) { continue }
-    $res = Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending |
-        ForEach-Object { Join-Path $_.FullName "resources" } |
-        Where-Object { (Test-Path (Join-Path $_ "app.asar")) -or (Test-Path (Join-Path $_ "_app.asar")) } |
-        Select-Object -First 1
-    if ($res) { $found[$label] = $res }
-}
-
-if ($found.Count -eq 0) {
-    Write-Host "error: no Discord installation found, install Discord and launch it once first"
-    exit 1
-}
-
-$default = if ($found.Contains("stable")) { "stable" } else { @($found.Keys)[0] }
-
-if ($found.Count -gt 1 -and -not $branch) {
-    $opts = (@($found.Keys) + "all") -join "/"
-    $branch = Read-Host "which Discord installation do you want to patch? ($opts) [$default]"
-}
-
-$branch = if ($branch) { $branch.Trim().ToLower() } else { $default }
-
-$targets = [ordered]@{}
-if ($branch -eq "all") {
-    $targets = $found
-} elseif ($found.Contains($branch)) {
-    $targets[$branch] = $found[$branch]
-} else {
-    $first = @($found.Keys)[0]
-    Write-Host "no '$branch' install found, using $first instead"
-    $targets[$first] = $found[$first]
-}
-
-Write-Host ""
-Write-Host "downloading RestoreGoLive..."
-New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-foreach ($f in $files) {
-    try {
-        Invoke-WebRequest -Uri "$baseUrl/$f" -OutFile (Join-Path $distDir $f) -UseBasicParsing
-    } catch {
-        Write-Host "error: could not download $f"
-        exit 1
+    $branches = [ordered]@{
+        stable = "Discord"
+        ptb    = "DiscordPTB"
+        canary = "DiscordCanary"
     }
-}
-Set-Content -Path (Join-Path $distDir "package.json") -Value "{}" -NoNewline
-Write-Host "plugin files installed to $distDir"
 
-$patcher = (Join-Path $distDir "patcher.js") -replace '\\', '\\'
+    function Ask($question, $default) {
+        if ($assumeYes) { return $default }
+        $answer = Read-Host "$question [$default]"
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $default }
+        return $answer.Trim().ToLower()
+    }
 
-foreach ($label in $targets.Keys) {
-    $res = $targets[$label]
-    $asar = Join-Path $res "app.asar"
-    $orig = Join-Path $res "_app.asar"
-    Write-Host ""
-    Write-Host "-> $label"
+    $found = @()
+    foreach ($label in $branches.Keys) {
+        $root = Join-Path $env:LOCALAPPDATA $branches[$label]
+        if (Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue) { $found += $label }
+    }
 
-    $fresh = $false
-    if (Test-Path $asar -PathType Leaf) {
-        try {
-            Remove-Item -Force $orig -ErrorAction SilentlyContinue
-            Move-Item -Path $asar -Destination $orig -Force
-        } catch {
-            Write-Host "   FAILED: cannot write to $res, fully close Discord and try again"
-            continue
+    if ($found.Count -eq 0) {
+        Write-Host "error: no Discord installation found, install Discord and launch it once first"
+        return
+    }
+
+    $default = if ($found -contains "stable") { "stable" } else { $found[0] }
+    if (-not $branch) {
+        $branch = if ($found.Count -gt 1) { Ask "which Discord installation do you want to patch? ($(($found + 'all') -join '/'))" $default } else { $default }
+    }
+    $branch = $branch.Trim().ToLower()
+    if ($branch -ne "all" -and $found -notcontains $branch) {
+        Write-Host "no '$branch' install found, using $default instead"
+        $branch = $default
+    }
+    $targets = if ($branch -eq "all") { $found } else { @($branch) }
+
+    $closed = @()
+    foreach ($label in $targets) {
+        $exe = $branches[$label]
+        if (Get-Process -Name $exe -ErrorAction SilentlyContinue) {
+            $answer = Ask "$exe is running and has to be closed to patch it, close it now? (y/n)" "y"
+            if ($answer -notmatch "^y") {
+                Write-Host "fully quit $exe (including the tray icon) and run this again"
+                return
+            }
+            Stop-Process -Name $exe -Force
+            $closed += $label
         }
-        $fresh = $true
+    }
+    if ($closed.Count -gt 0) { Start-Sleep -Seconds 2 }
+
+    $setup = Join-Path $env:TEMP "restore-go-live-setup"
+    New-Item -ItemType Directory -Force -Path $setup | Out-Null
+    $cli = Join-Path $setup "restore-go-live.exe"
+
+    Write-Host "downloading RestoreGoLive..."
+    try {
+        Invoke-WebRequest -Uri "$baseUrl/restore-go-live.exe" -OutFile $cli -UseBasicParsing
+    } catch {
+        Write-Host "error: could not download restore-go-live.exe from $baseUrl"
+        return
     }
 
-    if (-not (Test-Path $orig -PathType Leaf)) {
-        Write-Host "   skipped: no app.asar"
-        continue
+    $env:RGL_RELEASE_URL = $baseUrl
+    $ErrorActionPreference = "Continue"
+    & $cli install --branch $branch
+    $code = $LASTEXITCODE
+    Remove-Item -Recurse -Force $setup -ErrorAction SilentlyContinue
+
+    foreach ($label in $closed) {
+        $root = Join-Path $env:LOCALAPPDATA $branches[$label]
+        $updater = Join-Path $root "Update.exe"
+        if (Test-Path $updater) {
+            Start-Process -FilePath $updater -ArgumentList "--processStart", "$($branches[$label]).exe"
+        }
     }
 
-    $legacy = Join-Path $res "app"
-    if (Test-Path (Join-Path $legacy "index.js")) {
-        Remove-Item -Recurse -Force $legacy
+    if ($code -ne 0) {
+        Write-Host ""
+        Write-Host "something went wrong, see the messages above"
+        return
     }
-
-    New-Item -ItemType Directory -Force -Path $asar | Out-Null
-    Set-Content -Path (Join-Path $asar "index.js") -Value "require(`"$patcher`");"
-    Set-Content -Path (Join-Path $asar "package.json") -Value '{"name":"discord","main":"index.js"}'
-
-    if ($fresh) {
-        Write-Host "   patched"
-    } else {
-        Write-Host "   already patched, plugin files refreshed"
-    }
+    Write-Host ""
+    Write-Host "RestoreGoLive stays installed across Discord updates and keeps itself up to date."
 }
 
-Write-Host ""
-Write-Host "done! fully quit and reopen Discord :)"
+Install-RestoreGoLive

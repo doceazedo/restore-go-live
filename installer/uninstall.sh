@@ -33,7 +33,7 @@ resolve_all() {
 
 case "$(uname -s)" in
   Darwin)
-    DATA_DIRS=("$HOME/Library/Application Support/Vencord")
+    DATA_DIRS=("$HOME/Library/Application Support/RestoreGoLive")
     ROOTS=(
       "/Applications/Discord.app/Contents/Resources"
       "$HOME/Applications/Discord.app/Contents/Resources"
@@ -45,7 +45,7 @@ case "$(uname -s)" in
     ;;
   Linux)
     CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
-    DATA_DIRS=("$CONFIG/Vencord")
+    DATA_DIRS=("$CONFIG/RestoreGoLive")
     ROOTS=(
       "$CONFIG/discord" "$CONFIG/discordptb" "$CONFIG/discordcanary"
       /usr/share/discord /usr/lib/discord /usr/lib64/discord
@@ -61,7 +61,7 @@ case "$(uname -s)" in
       fp_id="${fp%%|*}"
       fp_dir="${fp#*|}"
       fp_cfg="$HOME/.var/app/$fp_id/config"
-      DATA_DIRS+=("$fp_cfg/Vencord")
+      DATA_DIRS+=("$fp_cfg/RestoreGoLive")
       ROOTS+=(
         "$fp_cfg/${fp_dir//-/}"
         "$HOME/.local/share/flatpak/app/$fp_id/current/active/files/$fp_dir"
@@ -76,7 +76,7 @@ for ROOT in "${ROOTS[@]}"; do
   while IFS= read -r RES; do
     [ -n "$RES" ] || continue
     for SHIM in "$RES/app.asar" "$RES/app"; do
-      if [ -d "$SHIM" ] && grep -q "patcher.js" "$SHIM/index.js" 2>/dev/null; then
+      if [ -d "$SHIM" ] && grep -qE 'RestoreGoLive|patcher\.js' "$SHIM/index.js" 2>/dev/null; then
         rm -rf "$SHIM"
         say "removed shim from $RES"
       fi
@@ -89,9 +89,16 @@ for ROOT in "${ROOTS[@]}"; do
 done
 
 for DATA in "${DATA_DIRS[@]}"; do
-  if [ -d "$DATA/dist" ]; then
-    rm -rf "$DATA/dist"
-    say "removed $DATA/dist"
+  if [ -d "$DATA" ]; then
+    rm -rf "$DATA"
+    say "removed $DATA"
+  fi
+  OLD="${DATA%/RestoreGoLive}/Vencord/dist"
+  if grep -q 'RestoreGoLive' "$OLD/patcher.js" 2>/dev/null || grep -q 'RestoreGoLive' "$OLD/renderer.js" 2>/dev/null; then
+    for f in patcher.js preload.js renderer.js renderer.css; do
+      rm -f "$OLD/$f" "$OLD/$f.map" "$OLD/$f.LEGAL.txt"
+    done
+    say "removed the old Vencord-based build from $OLD"
   fi
 done
 

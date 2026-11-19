@@ -2,9 +2,11 @@
 set -euo pipefail
 
 REPO="${P2P_REPO:-doceazedo/restore-go-live}"
-BASE_URL="${P2P_BASE_URL:-https://github.com/$REPO/releases/latest/download}"
+BASE_URL="${RGL_RELEASE_URL:-${P2P_BASE_URL:-https://github.com/$REPO/releases/latest/download}}"
+FORCE="${P2P_FORCE:-}"
 BRANCH="${P2P_DISCORD_BRANCH:-}"
-FILES=(patcher.js preload.js renderer.js renderer.css)
+FILES=(main.js preload.js renderer.js)
+LEGACY_FILES=(patcher.js preload.js renderer.js renderer.css)
 
 say() { printf '%s\n' "$*" >&2; }
 die() { say "error: $*"; exit 1; }
@@ -60,9 +62,42 @@ resolve_res() {
   newest_app "$d"
 }
 
+shim_source() {
+  local target
+  target=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  cat <<SHIM
+const target = "$target";
+if (require("fs").existsSync(target)) {
+  require(target);
+} else {
+  const path = require("path");
+  const message = "[" + new Date().toISOString() + "] [" + process.pid + "] payload missing at " + target + ", starting Discord without it";
+  console.error("[RestoreGoLive] " + message);
+  try {
+    const logs = path.join(path.dirname(target), "..", "logs");
+    require("fs").mkdirSync(logs, { recursive: true });
+    require("fs").appendFileSync(path.join(logs, "main.log"), message + "\\n");
+  } catch {}
+  const original = path.join(__dirname, "..", "_app.asar");
+  const pkg = require(path.join(original, "package.json"));
+  require.main.filename = path.join(original, pkg.main);
+  require("electron").app.setAppPath(original);
+  require(require.main.filename);
+}
+SHIM
+}
+
+shim_is_ours() {
+  grep -qE 'RestoreGoLive|patcher\.js' "$1/index.js" 2>/dev/null
+}
+
+legacy_is_ours() {
+  grep -q 'RestoreGoLive' "$1/patcher.js" 2>/dev/null || grep -q 'RestoreGoLive' "$1/renderer.js" 2>/dev/null
+}
+
 case "$(uname -s)" in
   Darwin)
-    DATA="$HOME/Library/Application Support/Vencord"
+    DATA="$HOME/Library/Application Support/RestoreGoLive"
     CANDIDATES=(
       "stable|/Applications/Discord.app/Contents/Resources|"
       "stable|$HOME/Applications/Discord.app/Contents/Resources|"
@@ -74,7 +109,7 @@ case "$(uname -s)" in
     ;;
   Linux)
     CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
-    DATA="$CONFIG/Vencord"
+    DATA="$CONFIG/RestoreGoLive"
     CANDIDATES=(
       "stable|$CONFIG/discord|"
       "ptb|$CONFIG/discordptb|"
@@ -104,7 +139,7 @@ case "$(uname -s)" in
       fp_id="${fp_rest%%|*}"
       fp_dir="${fp_rest#*|}"
       fp_cfg="$HOME/.var/app/$fp_id/config"
-      fp_data="$fp_cfg/Vencord"
+      fp_data="$fp_cfg/RestoreGoLive"
       CANDIDATES+=(
         "$fp_label|$fp_cfg/${fp_dir//-/}|$fp_data"
         "$fp_label|$HOME/.local/share/flatpak/app/$fp_id/current/active/files/$fp_dir|$fp_data"
@@ -173,9 +208,8 @@ mkdir -p "$STAGE"
 for f in "${FILES[@]}"; do
   curl -fsSL "$BASE_URL/$f" -o "$STAGE/$f" || die "could not download $f"
 done
-printf '{}' > "$STAGE/package.json"
 fix_owner "$DATA"
-say "plugin files installed to $STAGE"
+say "files installed to $STAGE"
 
 for entry in "${TARGETS[@]}"; do
   label="${entry%%|*}"
@@ -192,15 +226,28 @@ for entry in "${TARGETS[@]}"; do
       say "   FAILED: cannot write to $TDATA"
       continue
     fi
-    cp -f "$STAGE/package.json" "$TDATA/dist/package.json"
     for f in "${FILES[@]}"; do
       cp -f "$STAGE/$f" "$TDATA/dist/$f"
     done
     fix_owner "$TDATA"
-    say "   plugin files copied to $TDATA/dist"
+    say "   files copied to $TDATA/dist"
   fi
 
-  ESCAPED=$(printf '%s' "$TDATA/dist/patcher.js" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  if [ -z "$FORCE" ]; then
+    if [ -f "$RES/app.asar" ] && [ -f "$RES/_app.asar" ]; then
+      say "   skipped: another mod (likely Vencord) is installed here, rerun with P2P_FORCE=1 to replace it"
+      continue
+    fi
+    if [ -d "$RES/app.asar" ] && ! shim_is_ours "$RES/app.asar"; then
+      say "   skipped: another mod is installed here, rerun with P2P_FORCE=1 to replace it"
+      continue
+    fi
+  fi
+  if [ -d "$RES/app.asar" ] && [ -n "$FORCE" ] && ! shim_is_ours "$RES/app.asar"; then
+    rm -rf "$RES/app.asar"
+  elif [ -f "$RES/app.asar" ] && [ -f "$RES/_app.asar" ]; then
+    rm -f "$RES/app.asar"
+  fi
 
   FRESH=0
   if [ -f "$RES/app.asar" ]; then
@@ -227,14 +274,14 @@ for entry in "${TARGETS[@]}"; do
     say "   FAILED: cannot write to $RES"
     continue
   fi
-  printf 'require("%s");\n' "$ESCAPED" > "$RES/app.asar/index.js"
-  printf '{"name":"discord","main":"index.js"}\n' > "$RES/app.asar/package.json"
+  shim_source "$TDATA/dist/main.js" > "$RES/app.asar/index.js"
+  printf '{"name":"discord","main":"index.js","restoreGoLive":true}\n' > "$RES/app.asar/package.json"
   case "$RES" in "$HOME"/*) fix_owner "$RES/app.asar" ;; esac
 
   if [ "$FRESH" = 1 ]; then
     say "   patched"
   else
-    say "   already patched, plugin files refreshed"
+    say "   already patched, shim refreshed"
   fi
 
   case "$RES" in
@@ -242,5 +289,26 @@ for entry in "${TARGETS[@]}"; do
   esac
 done
 
+LEGACY_IN_USE=0
+for entry in "${FOUND[@]}"; do
+  rest="${entry#*|}"
+  RES="${rest%%|*}"
+  grep -q 'patcher\.js' "$RES/app.asar/index.js" 2>/dev/null && LEGACY_IN_USE=1
+done
+if [ "$LEGACY_IN_USE" = 0 ]; then
+  for entry in "${FOUND[@]}"; do
+    rest="${entry#*|}"
+    TDATA="${rest#*|}"
+    [ -n "$TDATA" ] || TDATA="$DATA"
+    OLD="${TDATA%/RestoreGoLive}/Vencord/dist"
+    legacy_is_ours "$OLD" || continue
+    for f in "${LEGACY_FILES[@]}"; do
+      rm -f "$OLD/$f" "$OLD/$f.map" "$OLD/$f.LEGAL.txt"
+    done
+    say "removed the old Vencord-based build from $OLD"
+  done
+fi
+
 say ""
 say "done! fully quit and reopen Discord :)"
+say "note: on macOS and Linux, Discord updates undo the patch, just rerun this installer"
