@@ -8,88 +8,149 @@ function Install-RestoreGoLive {
     $assumeYes = $env:P2P_YES -eq "1"
 
     $branches = [ordered]@{
-        stable = "Discord"
-        ptb    = "DiscordPTB"
-        canary = "DiscordCanary"
+        stable = @{ Dir = "Discord"; Name = "Discord" }
+        ptb    = @{ Dir = "DiscordPTB"; Name = "Discord PTB" }
+        canary = @{ Dir = "DiscordCanary"; Name = "Discord Canary" }
     }
 
-    function Ask($question, $default) {
+    function Say($icon, $color, $text) {
+        Write-Host "  $icon " -ForegroundColor $color -NoNewline
+        Write-Host $text
+    }
+    function Step($text) { Say ">" Cyan $text }
+    function Ok($text) { Say "+" Green $text }
+    function Warn($text) { Say "!" Yellow $text }
+    function Fail($text) { Say "x" Red $text }
+
+    function Ask($question, $hint, $default) {
         if ($assumeYes) { return $default }
-        $answer = Read-Host "$question [$default]"
+        Write-Host "  ? " -ForegroundColor Magenta -NoNewline
+        Write-Host "$question " -NoNewline
+        Write-Host "($hint) " -ForegroundColor DarkGray -NoNewline
+        $answer = Read-Host
         if ([string]::IsNullOrWhiteSpace($answer)) { return $default }
         return $answer.Trim().ToLower()
     }
+    function Confirm($question) { (Ask $question "Y/n" "y") -match "^y" }
 
-    $found = @()
-    foreach ($label in $branches.Keys) {
-        $root = Join-Path $env:LOCALAPPDATA $branches[$label]
-        if (Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue) { $found += $label }
+    function Root($label) { Join-Path $env:LOCALAPPDATA $branches[$label].Dir }
+    function Names($labels) { ($labels | ForEach-Object { $branches[$_].Name }) -join " and " }
+
+    function Test-Patched($label) {
+        $app = Get-ChildItem -Path (Root $label) -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
+            Sort-Object { try { [version]$_.Name.Substring(4) } catch { [version]"0.0" } } |
+            Select-Object -Last 1
+        if (-not $app) { return $false }
+        $pkg = Join-Path $app.FullName "resources\app.asar\package.json"
+        (Test-Path $pkg -PathType Leaf) -and ((Get-Content $pkg -Raw) -match '"restoreGoLive"\s*:\s*true')
     }
 
+    Write-Host ""
+    Write-Host "  RestoreGoLive" -ForegroundColor Magenta
+    Write-Host "  P2P screen sharing for Discord" -ForegroundColor DarkGray
+    Write-Host ""
+
+    $found = @($branches.Keys | Where-Object { Get-ChildItem -Path (Root $_) -Directory -Filter "app-*" -ErrorAction SilentlyContinue })
     if ($found.Count -eq 0) {
-        Write-Host "error: no Discord installation found, install Discord and launch it once first"
+        Fail "No Discord installation found. Install Discord and open it once first."
         return
     }
 
     $default = if ($found -contains "stable") { "stable" } else { $found[0] }
-    if (-not $branch) {
-        $branch = if ($found.Count -gt 1) { Ask "which Discord installation do you want to patch? ($(($found + 'all') -join '/'))" $default } else { $default }
-    }
-    $branch = $branch.Trim().ToLower()
-    if ($branch -ne "all" -and $found -notcontains $branch) {
-        Write-Host "no '$branch' install found, using $default instead"
+    if ($branch) {
+        $branch = $branch.Trim().ToLower()
+    } elseif ($found.Count -gt 1) {
+        Ok "Found $(Names $found)"
+        $options = (($found + "all") | ForEach-Object { if ($_ -eq $default) { $_.ToUpper() } else { $_ } }) -join "/"
+        do {
+            $branch = Ask "Which one should RestoreGoLive be installed on?" $options $default
+        } until ($branch -eq "all" -or $found -contains $branch)
+    } else {
         $branch = $default
+    }
+    if ($branch -ne "all" -and $found -notcontains $branch) {
+        Fail "No $branch installation found."
+        return
     }
     $targets = if ($branch -eq "all") { $found } else { @($branch) }
 
-    $closed = @()
-    foreach ($label in $targets) {
-        $exe = $branches[$label]
-        if (Get-Process -Name $exe -ErrorAction SilentlyContinue) {
-            $answer = Ask "$exe is running and has to be closed to patch it, close it now? (y/n)" "y"
-            if ($answer -notmatch "^y") {
-                Write-Host "fully quit $exe (including the tray icon) and run this again"
-                return
-            }
-            Stop-Process -Name $exe -Force
-            $closed += $label
+    $patched = @($targets | Where-Object { Test-Patched $_ })
+    if ($patched.Count -gt 0) {
+        if (-not (Confirm "RestoreGoLive is already installed on $(Names $patched). Reinstall?")) {
+            Warn "Installation cancelled."
+            return
+        }
+    } elseif ($found.Count -eq 1 -and -not $env:P2P_DISCORD_BRANCH) {
+        if (-not (Confirm "Install RestoreGoLive on $(Names $targets)?")) {
+            Warn "Installation cancelled."
+            return
         }
     }
-    if ($closed.Count -gt 0) { Start-Sleep -Seconds 2 }
 
+    Write-Host ""
     $setup = Join-Path $env:TEMP "restore-go-live-setup"
     New-Item -ItemType Directory -Force -Path $setup | Out-Null
     $cli = Join-Path $setup "restore-go-live.exe"
 
-    Write-Host "downloading RestoreGoLive..."
+    Step "Downloading RestoreGoLive..."
     try {
         Invoke-WebRequest -Uri "$baseUrl/restore-go-live.exe" -OutFile $cli -UseBasicParsing
     } catch {
-        Write-Host "error: could not download restore-go-live.exe from $baseUrl"
+        Fail "Could not download restore-go-live.exe from $baseUrl"
         return
     }
 
+    Step "Installing on $(Names $targets)..."
     $env:RGL_RELEASE_URL = $baseUrl
     $ErrorActionPreference = "Continue"
-    & $cli install --branch $branch
+    $errored = $false
+    & $cli install --branch $branch 2>&1 | ForEach-Object {
+        $line = "$_".Trim()
+        if (-not $line -or $line -match "^done!") { return }
+        $line = $line -replace "^FAILED: ", ""
+        $text = $line.Substring(0, 1).ToUpper() + $line.Substring(1)
+        if ("$_" -match "^(FAILED|Error)" -or $errored) {
+            $errored = $true
+            Fail $text
+        } else {
+            Ok $text
+        }
+    }
     $code = $LASTEXITCODE
     Remove-Item -Recurse -Force $setup -ErrorAction SilentlyContinue
 
-    foreach ($label in $closed) {
-        $root = Join-Path $env:LOCALAPPDATA $branches[$label]
-        $updater = Join-Path $root "Update.exe"
-        if (Test-Path $updater) {
-            Start-Process -FilePath $updater -ArgumentList "--processStart", "$($branches[$label]).exe"
+    if ($code -ne 0) {
+        Write-Host ""
+        Fail "Something went wrong, see the messages above."
+        return
+    }
+
+    Write-Host ""
+    $running = @($targets | Where-Object { Get-Process -Name $branches[$_].Dir -ErrorAction SilentlyContinue })
+    if ($running.Count -gt 0) {
+        if (Confirm "$(Names $running) is open. Restart it now?") {
+            Step "Restarting $(Names $running)..."
+            foreach ($label in $running) { Stop-Process -Name $branches[$label].Dir -Force -ErrorAction SilentlyContinue }
+            Start-Sleep -Seconds 2
+            foreach ($label in $running) {
+                $updater = Join-Path (Root $label) "Update.exe"
+                if (Test-Path $updater) {
+                    Start-Process -FilePath $updater -ArgumentList "--processStart", "$($branches[$label].Dir).exe"
+                }
+            }
+            Ok "Restarted $(Names $running)"
+        } else {
+            Warn "Fully quit $(Names $running) (including the tray icon) and reopen it to load RestoreGoLive."
         }
     }
 
-    if ($code -ne 0) {
-        Write-Host ""
-        Write-Host "something went wrong, see the messages above"
-        return
-    }
     Write-Host ""
+    Write-Host "  Done! " -ForegroundColor Green -NoNewline
     Write-Host "RestoreGoLive stays installed across Discord updates and keeps itself up to date."
+    Write-Host ""
+    Write-Host "  To uninstall, run:" -ForegroundColor DarkGray
+    Write-Host "  irm https://doce.sh/restore-go-live/uninstall.ps1 | iex" -ForegroundColor Cyan
+    Write-Host ""
 }
 
 Install-RestoreGoLive

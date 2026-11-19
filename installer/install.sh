@@ -8,8 +8,84 @@ BRANCH="${P2P_DISCORD_BRANCH:-}"
 FILES=(main.js preload.js renderer.js)
 LEGACY_FILES=(patcher.js preload.js renderer.js renderer.css)
 
+if [ -t 2 ]; then
+  C_RESET=$'\033[0m' C_DIM=$'\033[2m' C_RED=$'\033[31m' C_GREEN=$'\033[32m' C_YELLOW=$'\033[33m' C_MAGENTA=$'\033[35m' C_CYAN=$'\033[36m' C_BOLD=$'\033[1m'
+else
+  C_RESET="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_MAGENTA="" C_CYAN="" C_BOLD=""
+fi
+
+FAILED=0
 say() { printf '%s\n' "$*" >&2; }
-die() { say "error: $*"; exit 1; }
+step() { say "  ${C_CYAN}>${C_RESET} $*"; }
+ok() { say "  ${C_GREEN}+${C_RESET} $*"; }
+warn() { say "  ${C_YELLOW}!${C_RESET} $*"; }
+fail() { FAILED=1; say "  ${C_RED}x${C_RESET} $*"; }
+die() { fail "$*"; exit 1; }
+
+HAS_TTY=0
+if [ -z "${P2P_YES:-}" ] && (exec 3</dev/tty) 2>/dev/null; then HAS_TTY=1; fi
+
+ask() {
+  local answer=""
+  if [ "$HAS_TTY" = 1 ]; then
+    printf '  %s?%s %s %s(%s)%s ' "$C_MAGENTA" "$C_RESET" "$1" "$C_DIM" "$2" "$C_RESET" >&2
+    read -r answer < /dev/tty || answer=""
+  fi
+  answer="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  printf '%s' "${answer:-$3}"
+}
+
+confirm() {
+  case "$(ask "$1" "Y/n" y)" in y*) return 0 ;; *) return 1 ;; esac
+}
+
+display_name() {
+  case "$1" in
+    stable) printf 'Discord' ;;
+    ptb) printf 'Discord PTB' ;;
+    canary) printf 'Discord Canary' ;;
+  esac
+}
+
+names() {
+  local out="" l
+  for l in "$@"; do
+    if [ -n "$out" ]; then out="$out and "; fi
+    out="$out$(display_name "$l")"
+  done
+  printf '%s' "$out"
+}
+
+proc_name() {
+  case "$(uname -s):$1" in
+    Darwin:ptb) printf 'Discord PTB' ;;
+    Darwin:canary) printf 'Discord Canary' ;;
+    *:ptb) printf 'DiscordPTB' ;;
+    *:canary) printf 'DiscordCanary' ;;
+    *) printf 'Discord' ;;
+  esac
+}
+
+relaunch() {
+  local bin
+  if [ "$(uname -s)" = Darwin ]; then
+    open -a "$(display_name "$1")" 2>/dev/null
+    return
+  fi
+  [ -z "$REAL_USER" ] || return 1
+  case "$1" in
+    stable) bin=discord ;;
+    ptb) bin=discord-ptb ;;
+    canary) bin=discord-canary ;;
+  esac
+  command -v "$bin" >/dev/null 2>&1 || return 1
+  nohup "$bin" >/dev/null 2>&1 &
+}
+
+say ""
+say "  ${C_BOLD}${C_MAGENTA}RestoreGoLive${C_RESET}"
+say "  ${C_DIM}P2P screen sharing for Discord${C_RESET}"
+say ""
 
 REAL_USER=""
 if [ "$(id -u)" = 0 ]; then
@@ -23,7 +99,7 @@ if [ "$(id -u)" = 0 ]; then
         *) unset XDG_CONFIG_HOME ;;
       esac
       export HOME="$REAL_HOME"
-      say "running as root, using $REAL_USER's home ($HOME)"
+      warn "Running as root, using $REAL_USER's home ($HOME)"
     fi
   fi
 fi
@@ -147,7 +223,7 @@ case "$(uname -s)" in
       )
     done
     ;;
-  *) die "unsupported platform: $(uname -s)" ;;
+  *) die "Unsupported platform: $(uname -s)" ;;
 esac
 
 FOUND=()
@@ -164,52 +240,61 @@ for entry in "${CANDIDATES[@]}"; do
   FOUND+=("$label|$res|$tdata")
 done
 
-[ "${#FOUND[@]}" -gt 0 ] || die "no Discord installation found, install Discord and launch it once first"
+[ "${#FOUND[@]}" -gt 0 ] || die "No Discord installation found. Install Discord and open it once first."
 
-if [ "${#FOUND[@]}" -gt 1 ] && [ -z "$BRANCH" ]; then
-  DEFAULT=stable
-  case "$SEEN" in *"[stable]"*) ;; *) DEFAULT="${FOUND[0]%%|*}" ;; esac
+FOUND_LABELS=()
+for entry in "${FOUND[@]}"; do FOUND_LABELS+=("${entry%%|*}"); done
+DEFAULT=stable
+case "$SEEN" in *"[stable]"*) ;; *) DEFAULT="${FOUND_LABELS[0]}" ;; esac
 
-  OPTS=""
-  for entry in "${FOUND[@]}"; do
-    OPTS="$OPTS${entry%%|*}/"
+if [ -n "$BRANCH" ]; then
+  BRANCH="$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+elif [ "${#FOUND[@]}" -gt 1 ]; then
+  ok "Found $(names "${FOUND_LABELS[@]}")"
+  OPTS="$(IFS=/; printf '%s' "${FOUND_LABELS[*]}")/all"
+  HINT="$(printf '/%s/' "$OPTS" | sed "s|/$DEFAULT/|/$(printf '%s' "$DEFAULT" | tr '[:lower:]' '[:upper:]')/|; s|^/||; s|/$||")"
+  while :; do
+    BRANCH="$(ask "Which one should RestoreGoLive be installed on?" "$HINT" "$DEFAULT")"
+    case "/$OPTS/" in *"/$BRANCH/"*) break ;; esac
   done
-  OPTS="${OPTS}all"
-
-  if (exec 3</dev/tty) 2>/dev/null; then
-    printf 'which Discord installation do you want to patch? (%s) [%s]: ' "$OPTS" "$DEFAULT" >&2
-    read -r BRANCH < /dev/tty || BRANCH=""
-  else
-    say "multiple installs found and no terminal to ask, defaulting to $DEFAULT"
-    say "(set P2P_DISCORD_BRANCH to $OPTS to choose)"
-  fi
-  BRANCH="${BRANCH:-$DEFAULT}"
+else
+  BRANCH="$DEFAULT"
 fi
-
-BRANCH="$(printf '%s' "${BRANCH:-stable}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
 
 TARGETS=()
 if [ "$BRANCH" = all ]; then
   TARGETS=("${FOUND[@]}")
 else
   for entry in "${FOUND[@]}"; do
-    [ "${entry%%|*}" = "$BRANCH" ] && TARGETS+=("$entry")
+    if [ "${entry%%|*}" = "$BRANCH" ]; then TARGETS+=("$entry"); fi
   done
-  if [ "${#TARGETS[@]}" -eq 0 ]; then
-    say "no '$BRANCH' install found, using ${FOUND[0]%%|*} instead"
-    TARGETS=("${FOUND[0]}")
-  fi
+  [ "${#TARGETS[@]}" -gt 0 ] || die "No $BRANCH installation found."
+fi
+
+TARGET_LABELS=()
+PATCHED_LABELS=()
+for entry in "${TARGETS[@]}"; do
+  label="${entry%%|*}"
+  rest="${entry#*|}"
+  TARGET_LABELS+=("$label")
+  if [ -d "${rest%%|*}/app.asar" ] && shim_is_ours "${rest%%|*}/app.asar"; then PATCHED_LABELS+=("$label"); fi
+done
+
+if [ "${#PATCHED_LABELS[@]}" -gt 0 ]; then
+  confirm "RestoreGoLive is already installed on $(names "${PATCHED_LABELS[@]}"). Reinstall?" || { warn "Installation cancelled."; exit 0; }
+elif [ "${#FOUND[@]}" -eq 1 ] && [ -z "${P2P_DISCORD_BRANCH:-}" ]; then
+  confirm "Install RestoreGoLive on $(names "${TARGET_LABELS[@]}")?" || { warn "Installation cancelled."; exit 0; }
 fi
 
 say ""
-say "downloading RestoreGoLive..."
+step "Downloading RestoreGoLive..."
 STAGE="$DATA/dist"
 mkdir -p "$STAGE"
 for f in "${FILES[@]}"; do
-  curl -fsSL "$BASE_URL/$f" -o "$STAGE/$f" || die "could not download $f"
+  curl -fsSL "$BASE_URL/$f" -o "$STAGE/$f" || die "Could not download $f"
 done
 fix_owner "$DATA"
-say "files installed to $STAGE"
+ok "Files installed to $STAGE"
 
 for entry in "${TARGETS[@]}"; do
   label="${entry%%|*}"
@@ -218,28 +303,27 @@ for entry in "${TARGETS[@]}"; do
   TDATA="${rest#*|}"
   [ -n "$TDATA" ] || TDATA="$DATA"
 
-  say ""
-  say "-> $label ($RES)"
+  step "Installing on $(display_name "$label")..."
 
   if [ "$TDATA" != "$DATA" ]; then
     if ! mkdir -p "$TDATA/dist" 2>/dev/null; then
-      say "   FAILED: cannot write to $TDATA"
+      fail "Cannot write to $TDATA"
       continue
     fi
     for f in "${FILES[@]}"; do
       cp -f "$STAGE/$f" "$TDATA/dist/$f"
     done
     fix_owner "$TDATA"
-    say "   files copied to $TDATA/dist"
+    ok "Files copied to $TDATA/dist"
   fi
 
   if [ -z "$FORCE" ]; then
     if [ -f "$RES/app.asar" ] && [ -f "$RES/_app.asar" ]; then
-      say "   skipped: another mod (likely Vencord) is installed here, rerun with P2P_FORCE=1 to replace it"
+      warn "Skipped: another mod (likely Vencord) is installed here, rerun with P2P_FORCE=1 to replace it"
       continue
     fi
     if [ -d "$RES/app.asar" ] && ! shim_is_ours "$RES/app.asar"; then
-      say "   skipped: another mod is installed here, rerun with P2P_FORCE=1 to replace it"
+      warn "Skipped: another mod is installed here, rerun with P2P_FORCE=1 to replace it"
       continue
     fi
   fi
@@ -253,16 +337,16 @@ for entry in "${TARGETS[@]}"; do
   if [ -f "$RES/app.asar" ]; then
     rm -f "$RES/_app.asar"
     if ! mv "$RES/app.asar" "$RES/_app.asar" 2>/dev/null; then
-      say "   FAILED: cannot write to $RES"
-      [ "$(uname -s)" = Darwin ] && say "   grant your terminal App Management in System Settings -> Privacy & Security, then rerun"
-      [ "$(uname -s)" = Linux ] && say "   try again with sudo"
+      fail "Cannot write to $RES"
+      [ "$(uname -s)" = Darwin ] && warn "Grant your terminal App Management in System Settings -> Privacy & Security, then rerun"
+      [ "$(uname -s)" = Linux ] && warn "Try again with sudo"
       continue
     fi
     FRESH=1
   fi
 
   if [ ! -f "$RES/_app.asar" ]; then
-    say "   skipped: no app.asar"
+    warn "Skipped: no app.asar"
     continue
   fi
 
@@ -271,7 +355,7 @@ for entry in "${TARGETS[@]}"; do
   fi
 
   if ! mkdir -p "$RES/app.asar" 2>/dev/null; then
-    say "   FAILED: cannot write to $RES"
+    fail "Cannot write to $RES"
     continue
   fi
   shim_source "$TDATA/dist/main.js" > "$RES/app.asar/index.js"
@@ -279,13 +363,13 @@ for entry in "${TARGETS[@]}"; do
   case "$RES" in "$HOME"/*) fix_owner "$RES/app.asar" ;; esac
 
   if [ "$FRESH" = 1 ]; then
-    say "   patched"
+    ok "Installed on $(display_name "$label")"
   else
-    say "   already patched, shim refreshed"
+    ok "Reinstalled on $(display_name "$label")"
   fi
 
   case "$RES" in
-    /var/lib/flatpak/*) say "   note: a flatpak update will undo this, just rerun the installer" ;;
+    /var/lib/flatpak/*) warn "A Flatpak update will undo this, just rerun the installer" ;;
   esac
 done
 
@@ -305,10 +389,41 @@ if [ "$LEGACY_IN_USE" = 0 ]; then
     for f in "${LEGACY_FILES[@]}"; do
       rm -f "$OLD/$f" "$OLD/$f.map" "$OLD/$f.LEGAL.txt"
     done
-    say "removed the old Vencord-based build from $OLD"
+    ok "Removed the old Vencord-based build from $OLD"
   done
 fi
 
+if [ "$FAILED" = 1 ]; then
+  say ""
+  die "Something went wrong, see the messages above."
+fi
+
+RUNNING=()
+for label in "${TARGET_LABELS[@]}"; do
+  if pgrep -x "$(proc_name "$label")" >/dev/null 2>&1; then RUNNING+=("$label"); fi
+done
+
+if [ "${#RUNNING[@]}" -gt 0 ]; then
+  say ""
+  if confirm "$(names "${RUNNING[@]}") is open. Restart it now?"; then
+    step "Restarting $(names "${RUNNING[@]}")..."
+    for label in "${RUNNING[@]}"; do pkill -x "$(proc_name "$label")" 2>/dev/null || true; done
+    sleep 2
+    for label in "${RUNNING[@]}"; do
+      if relaunch "$label"; then
+        ok "Restarted $(display_name "$label")"
+      else
+        warn "Closed $(display_name "$label"), open it again to load RestoreGoLive."
+      fi
+    done
+  else
+    warn "Fully quit $(names "${RUNNING[@]}") and reopen it to load RestoreGoLive."
+  fi
+fi
+
 say ""
-say "done! fully quit and reopen Discord :)"
-say "note: on macOS and Linux, Discord updates undo the patch, just rerun this installer"
+say "  ${C_GREEN}Done!${C_RESET} Discord updates undo the patch on macOS and Linux, just rerun this installer."
+say ""
+say "  ${C_DIM}To uninstall, run:${C_RESET}"
+say "  ${C_CYAN}curl -fsSL https://doce.sh/restore-go-live/uninstall.sh | bash${C_RESET}"
+say ""
