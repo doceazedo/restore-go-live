@@ -4,16 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "setup": "node scripts/setup.mjs",
-    "build": "node scripts/build.mjs build --standalone",
-    "buildWeb": "node scripts/build.mjs buildWeb",
-    "watch": "node scripts/build.mjs build --watch",
+    "build": "node scripts/build.mjs",
+    "buildDesktop": "node scripts/build.mjs --desktop",
+    "buildWeb": "node scripts/build.mjs --web",
+    "watch": "node scripts/build.mjs --desktop --watch",
     "embed": "node scripts/embed-native.mjs",
     "deploy": "node scripts/deploy.mjs",
-    "inject": "pnpm --dir Vencord inject",
-    "uninject": "pnpm --dir Vencord uninject",
     "typecheck": "node scripts/typecheck.mjs",
     "checkpatches": "node scripts/checkpatches.mjs",
     "package": "node scripts/package-release.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1",
+    "@types/react": "19.1.0",
+    "electron": "^39.8.10",
+    "esbuild": "0.28.1",
+    "typescript": "6.0.3"
   }
 }

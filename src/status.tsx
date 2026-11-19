@@ -1,5 +1,5 @@
-import ErrorBoundary from "@components/ErrorBoundary";
-import { useEffect, useReducer } from "@webpack/common";
+import ErrorBoundary from "@runtime/ErrorBoundary";
+import { useEffect, useReducer } from "@runtime/webpack/common";
 
 export const JoinStage = {
   PREPARING: "Resolving public endpoint via STUN...",

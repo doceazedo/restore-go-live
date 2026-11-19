@@ -1,4 +1,4 @@
-import { Patch } from "@utils/types";
+import { Patch } from "@runtime/plugin";
 
 type PluginPatch = Omit<Patch, "plugin">;
 

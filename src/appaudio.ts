@@ -1,4 +1,4 @@
-import { Logger } from "@utils/Logger";
+import { Logger } from "@runtime/logger";
 
 import { Native } from "./bridge";
 import { sourceParts } from "./core/sources";

@@ -21,37 +21,24 @@ pub fn install_from(source: &Path, dist: &Path) -> Result<()> {
         bail!("{} is missing {}", source.display(), absent.join(", "));
     }
 
-    let parent = dist.parent().context("payload dir has no parent")?;
-    fs::create_dir_all(parent)?;
-    let staged = parent.join("dist.new");
-    let old = parent.join("dist.old");
-    if staged.exists() {
-        fs::remove_dir_all(&staged)?;
-    }
-    fs::create_dir_all(&staged)?;
+    fs::create_dir_all(dist).with_context(|| format!("creating {}", dist.display()))?;
 
+    let mut staged = Vec::new();
     for entry in fs::read_dir(source)? {
         let entry = entry?;
-        if entry.file_type()?.is_file() {
-            fs::copy(entry.path(), staged.join(entry.file_name()))
-                .with_context(|| format!("copying {}", entry.path().display()))?;
+        if !entry.file_type()?.is_file() {
+            continue;
         }
+        let name = entry.file_name();
+        let temp = dist.join(format!("{}.rgl-new", name.to_string_lossy()));
+        fs::copy(entry.path(), &temp).with_context(|| format!("copying {}", entry.path().display()))?;
+        staged.push((temp, dist.join(&name)));
     }
 
-    if old.exists() {
-        fs::remove_dir_all(&old)?;
-    }
-    if dist.exists() {
-        retry("moving the old payload aside", || fs::rename(dist, &old))?;
-    }
-    if let Err(e) = retry("activating the new payload", || fs::rename(&staged, dist)) {
-        if old.exists() {
-            let _ = fs::rename(&old, dist);
-        }
-        return Err(e);
-    }
-    if old.exists() {
-        fs::remove_dir_all(&old).ok();
+    staged.sort_by_key(|(_, target)| target.file_name() == Some("main.js".as_ref()));
+
+    for (temp, target) in staged {
+        retry(&format!("replacing {}", target.display()), || fs::rename(&temp, &target))?;
     }
     Ok(())
 }

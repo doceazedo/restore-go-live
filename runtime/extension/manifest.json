@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "RestoreGoLive",
+  "description": "Replaces Discord's Go Live with P2P screen sharing",
+  "homepage_url": "https://github.com/doceazedo/restore-go-live",
+  "host_permissions": ["*://*.discord.com/*"],
+  "permissions": ["declarativeNetRequest"],
+  "content_scripts": [
+    {
+      "run_at": "document_start",
+      "matches": ["*://*.discord.com/*"],
+      "js": ["renderer.js"],
+      "all_frames": false,
+      "world": "MAIN"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "csp", "enabled": true, "path": "rules.json" }]
+  }
+}

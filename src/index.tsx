@@ -1,7 +1,7 @@
-import { definePluginSettings } from "@api/Settings";
-import { Logger } from "@utils/Logger";
-import definePlugin, { OptionType } from "@utils/types";
-import { Toasts } from "@webpack/common";
+import { definePluginSettings } from "@runtime/settings";
+import { Logger } from "@runtime/logger";
+import definePlugin, { OptionType } from "@runtime/plugin";
+import { Toasts } from "@runtime/webpack/common";
 
 import { parseStreamKey, streamKey } from "./core/session";
 import { Native } from "./bridge";

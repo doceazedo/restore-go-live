@@ -90,12 +90,40 @@ pub fn dir_has_marker(dir: &Path) -> bool {
     })
 }
 
+fn literal_between(source: &str, open: &str, close: char) -> Option<PathBuf> {
+    let start = source.find(open)? + open.len();
+    let end = start + source[start..].find(close)?;
+    serde_json::from_str::<String>(source[start..end].trim()).ok().map(PathBuf::from)
+}
+
 fn shim_target(shim: &Path) -> Option<PathBuf> {
     let index = fs::read_to_string(shim.join("index.js")).ok()?;
-    let start = index.find("require(")? + "require(".len();
-    let end = start + index[start..].find(')')?;
-    let literal = index[start..end].trim();
-    serde_json::from_str::<String>(literal).ok().map(PathBuf::from)
+    literal_between(&index, "const target = ", ';').or_else(|| literal_between(&index, "require(", ')'))
+}
+
+pub fn shim_source(main_js: &Path) -> Result<String> {
+    let target = serde_json::to_string(&main_js.to_string_lossy())?;
+    Ok(format!(
+        r#"const target = {target};
+if (require("fs").existsSync(target)) {{
+  require(target);
+}} else {{
+  const path = require("path");
+  const message = "[" + new Date().toISOString() + "] [" + process.pid + "] payload missing at " + target + ", starting Discord without it";
+  console.error("[RestoreGoLive] " + message);
+  try {{
+    const logs = path.join(path.dirname(target), "..", "logs");
+    require("fs").mkdirSync(logs, {{ recursive: true }});
+    require("fs").appendFileSync(path.join(logs, "main.log"), message + "\n");
+  }} catch {{}}
+  const original = path.join(__dirname, "..", "_app.asar");
+  const pkg = require(path.join(original, "package.json"));
+  require.main.filename = path.join(original, pkg.main);
+  require("electron").app.setAppPath(original);
+  require(require.main.filename);
+}}
+"#
+    ))
 }
 
 fn shim_is_ours(shim: &Path) -> bool {
@@ -163,8 +191,7 @@ pub fn retry<T>(what: &str, mut op: impl FnMut() -> io::Result<T>) -> Result<T> 
 fn write_shim(resources: &Path, main_js: &Path) -> Result<()> {
     let shim = app_asar(resources);
     fs::create_dir_all(&shim).with_context(|| format!("creating {}", shim.display()))?;
-    let target = serde_json::to_string(&main_js.to_string_lossy())?;
-    fs::write(shim.join("index.js"), format!("require({target});\n"))?;
+    fs::write(shim.join("index.js"), shim_source(main_js)?)?;
     let package = json!({ "name": "discord", "main": "index.js", SHIM_KEY: true });
     fs::write(shim.join("package.json"), serde_json::to_string(&package)?)?;
     Ok(())

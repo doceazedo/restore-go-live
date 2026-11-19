@@ -1,3 +1,5 @@
+import { getWreq } from "@runtime/webpack";
+
 import { broadcast } from "./broadcast";
 import {
   ApplicationStreamingStore,
@@ -329,7 +331,7 @@ export function voice() {
 }
 
 export function findModules(pattern: string, context = 300, limit = 4) {
-  const wreq = (globalThis as any).Vencord?.Webpack?.wreq;
+  const wreq = getWreq();
   if (!wreq?.m) return "webpack not ready";
   const re = new RegExp(pattern);
   const hits: Array<{ id: string; snippet: string }> = [];

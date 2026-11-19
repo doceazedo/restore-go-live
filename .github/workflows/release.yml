@@ -28,8 +28,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Clone Vencord and link plugin
-        run: node scripts/setup.mjs
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Embed native audio helper
         run: node scripts/embed-native.mjs
@@ -37,11 +37,8 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build desktop
+      - name: Build desktop and browser extensions
         run: pnpm build
-
-      - name: Build browser extensions
-        run: pnpm buildWeb
 
       - name: Package release
         run: node scripts/package-release.mjs

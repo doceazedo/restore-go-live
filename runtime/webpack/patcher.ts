@@ -11,6 +11,7 @@ const IGNORED_BUNDLES = ["sentry", "libdiscore", "fast-connect"];
 
 export let wreq: any = null;
 export let cache: Record<PropertyKey, any> | null = null;
+export const executed = new Map<PropertyKey, { exports: any }>();
 
 const pending: Patch[] = [];
 export const patchReport = new Map<Patch, { found: boolean; applied: number; errors: string[] }>();
@@ -74,6 +75,11 @@ function matchesFind(code: string, find: Patch["find"]) {
   return find.test(code);
 }
 
+function snippet(code: string, find: Patch["find"]) {
+  const at = typeof find === "string" ? code.indexOf(find) : code.search(find);
+  return at < 0 ? "" : code.slice(Math.max(0, at - 300), at + 300);
+}
+
 function patchFactory(id: PropertyKey, original: Factory): Factory {
   const originalCode = Function.prototype.toString.call(original);
   const isArrow = originalCode.startsWith("(");
@@ -95,7 +101,8 @@ function patchFactory(id: PropertyKey, original: Factory): Factory {
         next = code.replace(match, replacement.replace as any);
         if (next === code) {
           if (!(patch.noWarn || replacement.noWarn))
-            logger.warn(`patch had no effect (module ${String(id)}): ${match}`);
+            logger.warn(`patch had no effect (module ${String(id)}): ${match}
+${snippet(originalCode, patch.find)}`);
           continue;
         }
         const built = (0, eval)(`${next}\n//# sourceURL=RestoreGoLive/WebpackModule${String(id)}`);
@@ -142,7 +149,8 @@ function wrapFactory(original: Factory, id: PropertyKey): Factory {
       result = original.call(this, module, exports, require);
     }
 
-    notify(module.exports, module.id ?? id);
+    executed.set(id, module);
+    notify(module.exports, id);
     return result;
   } as Factory;
 
@@ -195,4 +203,8 @@ export function installWebpackHook() {
       instrument(this, modules);
     },
   });
+}
+
+export function getWreq() {
+  return wreq;
 }

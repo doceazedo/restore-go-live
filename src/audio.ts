@@ -1,4 +1,4 @@
-import { Logger } from "@utils/Logger";
+import { Logger } from "@runtime/logger";
 
 const logger = new Logger("P2PShare:audio");
 

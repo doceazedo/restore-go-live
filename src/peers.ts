@@ -1,4 +1,4 @@
-import { Logger } from "@utils/Logger";
+import { Logger } from "@runtime/logger";
 
 import { perPeerBitrate } from "./core/bitrate";
 

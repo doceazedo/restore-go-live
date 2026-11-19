@@ -10,27 +10,20 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DIST = join(ROOT, "Vencord", "dist");
+const DIST = join(ROOT, "dist");
 const OUT = join(ROOT, "release");
 
-const DESKTOP = ["patcher.js", "preload.js", "renderer.js", "renderer.css"];
+const DESKTOP = ["main.js", "preload.js", "renderer.js"];
 const BROWSER = ["extension-chrome.zip", "extension-firefox.zip"];
 
-const VESKTOP = [
-  "vencordDesktopMain.js",
-  "vencordDesktopPreload.js",
-  "vencordDesktopRenderer.js",
-  "vencordDesktopRenderer.css",
-];
-
-if (!existsSync(join(DIST, "patcher.js"))) {
-  console.error("Vencord/dist is missing, run pnpm build first");
+if (!existsSync(join(DIST, "main.js"))) {
+  console.error("dist is missing, run pnpm build first");
   process.exit(1);
 }
 
 for (const zip of BROWSER) {
   if (!existsSync(join(DIST, zip))) {
-    console.error(`${zip} is missing, run pnpm buildWeb first`);
+    console.error(`${zip} is missing, run pnpm build first`);
     process.exit(1);
   }
 }
@@ -38,7 +31,7 @@ for (const zip of BROWSER) {
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
-for (const file of [...DESKTOP, ...VESKTOP, ...BROWSER]) {
+for (const file of [...DESKTOP, ...BROWSER]) {
   const from = join(DIST, file);
   if (existsSync(from)) cpSync(from, join(OUT, file));
 }

@@ -265,8 +265,48 @@ fn payload_update_replaces_files() {
     fs::write(e.payload_src.join("main.js"), "v2").unwrap();
     rgl::payload::install_from(&e.payload_src, &dist).unwrap();
     assert_eq!(fs::read_to_string(dist.join("main.js")).unwrap(), "v2");
-    assert!(!e.ctx.paths.data.join("dist.old").exists());
-    assert!(!e.ctx.paths.data.join("dist.new").exists());
+    let leftovers = fs::read_dir(&dist)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".rgl-new"))
+        .count();
+    assert_eq!(leftovers, 0);
+}
+
+#[test]
+fn payload_update_never_removes_the_folder() {
+    let e = env(&[Branch::Canary]);
+    let dist = e.ctx.paths.dist();
+    rgl::payload::install_from(&e.payload_src, &dist).unwrap();
+    fs::write(dist.join("settings-like.json"), "keep").unwrap();
+    rgl::payload::install_from(&e.payload_src, &dist).unwrap();
+    assert!(dist.join("settings-like.json").exists());
+}
+
+#[test]
+fn shim_checks_payload_before_requiring_it() {
+    let source = patch::shim_source(Path::new(r"C:\data\dist\main.js")).unwrap();
+    assert!(source.starts_with(r#"const target = "C:\\data\\dist\\main.js";"#));
+    assert!(source.contains("existsSync(target)"));
+    assert!(source.contains("_app.asar"));
+}
+
+#[test]
+fn reads_target_from_old_style_shim() {
+    let e = env(&[Branch::Canary]);
+    let res = newest(&e, Branch::Canary);
+    fs::rename(res.join("app.asar"), res.join("_app.asar")).unwrap();
+    fs::create_dir_all(res.join("app.asar")).unwrap();
+    fs::write(res.join("app.asar").join("index.js"), r#"require("C:\\x\\main.js");"#).unwrap();
+    fs::write(
+        res.join("app.asar").join("package.json"),
+        r#"{"name":"discord","main":"index.js","restoreGoLive":true}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        patch::classify(&res, &e.ctx.paths.legacy_dist),
+        State::Patched { target: Some(PathBuf::from(r"C:\x\main.js")) }
+    );
 }
 
 #[test]
