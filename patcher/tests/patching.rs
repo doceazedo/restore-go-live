@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use rgl::cli::{self, Context, Target};
 use rgl::discord::{self, Branch, Platform};
 use rgl::patch::{self, PatchAction, State, UnpatchAction};
+use rgl::config::Config;
+use rgl::daemon::{stale_processes, Reconciler};
 use rgl::paths::Paths;
+use rgl::system::ProcessInfo;
 use tempfile::TempDir;
 
 const ORIGINAL: &[u8] = b"original discord asar";
@@ -52,6 +55,7 @@ fn env(branches: &[Branch]) -> Env {
     }
     let paths = Paths {
         data: roaming.join("RestoreGoLive"),
+        bin: local.join("RestoreGoLive"),
         legacy_dist: roaming.join("Vencord").join("dist"),
     };
     Env {
@@ -331,4 +335,88 @@ fn uninstall_one_branch_keeps_data_for_the_other() {
         patch::classify(&newest(&e, Branch::Stable), &e.ctx.paths.legacy_dist),
         State::Patched { .. }
     ));
+}
+
+fn age(path: &Path) {
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    fs::File::options().write(true).open(path).unwrap().set_modified(old).unwrap();
+}
+
+fn simulate_update(e: &Env, branch: Branch, version: &str) -> PathBuf {
+    app(&e.local.join(branch.windows_dir()), version)
+}
+
+#[test]
+fn install_records_managed_branches() {
+    let e = env(&[Branch::Stable, Branch::Canary]);
+    cli::install(&e.ctx, Some(Target::Canary), false, Some(e.payload_src.clone())).unwrap();
+    let config = Config::load(&e.ctx.paths.config());
+    assert_eq!(config.branches, vec![Branch::Canary]);
+    assert!(config.relaunch_after_update);
+}
+
+#[test]
+fn daemon_patches_new_version_once_settled() {
+    let e = env(&[Branch::Canary]);
+    cli::install(&e.ctx, Some(Target::Canary), false, Some(e.payload_src.clone())).unwrap();
+    let config = Config::load(&e.ctx.paths.config());
+    let fresh = simulate_update(&e, Branch::Canary, "1.0.11");
+    let mut reconciler = Reconciler::default();
+
+    assert!(reconciler.reconcile(&e.ctx, &config).is_empty());
+    assert_eq!(patch::classify(&fresh, &e.ctx.paths.legacy_dist), State::Unpatched);
+
+    age(&fresh.join("app.asar"));
+    let done = reconciler.reconcile(&e.ctx, &config);
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].action, PatchAction::Patched);
+    assert!(matches!(patch::classify(&fresh, &e.ctx.paths.legacy_dist), State::Patched { .. }));
+
+    assert!(reconciler.reconcile(&e.ctx, &config).is_empty());
+}
+
+#[test]
+fn daemon_ignores_unmanaged_branches() {
+    let e = env(&[Branch::Stable, Branch::Canary]);
+    cli::install(&e.ctx, Some(Target::Canary), false, Some(e.payload_src.clone())).unwrap();
+    let config = Config::load(&e.ctx.paths.config());
+    let stable = simulate_update(&e, Branch::Stable, "1.0.11");
+    age(&stable.join("app.asar"));
+    assert!(Reconciler::default().reconcile(&e.ctx, &config).is_empty());
+    assert_eq!(patch::classify(&stable, &e.ctx.paths.legacy_dist), State::Unpatched);
+}
+
+#[test]
+fn daemon_without_config_manages_patched_installs() {
+    let e = env(&[Branch::Stable, Branch::Canary]);
+    cli::install(&e.ctx, Some(Target::Canary), false, Some(e.payload_src.clone())).unwrap();
+    fs::remove_file(e.ctx.paths.config()).unwrap();
+    let config = Config::load(&e.ctx.paths.config());
+    let managed = Reconciler::managed(&e.ctx, &config);
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].branch, Branch::Canary);
+}
+
+#[test]
+fn daemon_repairs_removed_shim() {
+    let e = env(&[Branch::Canary]);
+    cli::install(&e.ctx, Some(Target::Canary), false, Some(e.payload_src.clone())).unwrap();
+    let config = Config::load(&e.ctx.paths.config());
+    let res = newest(&e, Branch::Canary);
+    fs::remove_dir_all(res.join("app.asar")).unwrap();
+    let done = Reconciler::default().reconcile(&e.ctx, &config);
+    assert_eq!(done[0].action, PatchAction::Repaired);
+}
+
+#[test]
+fn relaunch_only_targets_processes_started_just_before_the_patch() {
+    let dir = PathBuf::from(r"C:\Discord\app-1.0.11");
+    let other = PathBuf::from(r"C:\Discord\app-1.0.10");
+    let procs = vec![
+        ProcessInfo { pid: 1, exe: dir.join("Discord.exe"), started: 1_000 },
+        ProcessInfo { pid: 2, exe: dir.join("Discord.exe"), started: 900 },
+        ProcessInfo { pid: 3, exe: other.join("Discord.exe"), started: 1_000 },
+        ProcessInfo { pid: 4, exe: dir.join("Discord.exe"), started: 1_050 },
+    ];
+    assert_eq!(stale_processes(&procs, &dir, 1_030), vec![1]);
 }

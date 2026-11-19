@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::config::Config;
 use crate::discord::{self, Branch, Install, Platform};
 use crate::patch::{self, State};
-use crate::paths::Paths;
-use crate::payload;
+use crate::paths::{Paths, DAEMON_EXE};
+use crate::{daemon, payload, system};
 
 #[derive(Parser, Debug)]
 #[command(name = "restore-go-live", version, about = "Keeps RestoreGoLive patched into Discord")]
@@ -28,6 +29,8 @@ pub enum Command {
         force: bool,
         #[arg(long, value_name = "DIR")]
         payload: Option<PathBuf>,
+        #[arg(long, help = "Skip installing the background daemon")]
+        no_daemon: bool,
     },
     #[command(about = "Restore the original Discord and remove RestoreGoLive")]
     Uninstall {
@@ -36,6 +39,8 @@ pub enum Command {
         #[arg(long)]
         keep_data: bool,
     },
+    #[command(about = "Run the background daemon in the foreground")]
+    Daemon,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -85,18 +90,37 @@ pub fn run(cli: Cli) -> Result<()> {
     let ctx = Context::from_env()?;
     match cli.command.unwrap_or(Command::Status) {
         Command::Status => status(&ctx),
-        Command::Install { branch, force, payload } => {
-            let report = install(&ctx, branch, force, payload)?;
+        Command::Install { branch, force, payload, no_daemon } => {
+            let mut report = install(&ctx, branch, force, payload)?;
+            if !no_daemon && report.failures.is_empty() {
+                setup_daemon(&ctx, &mut report);
+            }
             report.print();
             report.into_result()?;
             println!("\ndone! fully quit and reopen Discord");
             Ok(())
         }
         Command::Uninstall { branch, keep_data } => {
-            let report = uninstall(&ctx, branch, keep_data)?;
+            let mut config = Config::load(&ctx.paths.config());
+            let remaining: Vec<Branch> = match branch.and_then(Target::branch) {
+                Some(b) => config.branches.iter().copied().filter(|x| *x != b).collect(),
+                None => Vec::new(),
+            };
+            let mut report = Report::default();
+            if remaining.is_empty() {
+                teardown_daemon(&ctx, &mut report);
+            }
+            let unpatched = uninstall(&ctx, branch, keep_data)?;
+            report.lines.extend(unpatched.lines);
+            report.failures.extend(unpatched.failures);
+            if !remaining.is_empty() {
+                config.branches = remaining;
+                config.save(&ctx.paths.config())?;
+            }
             report.print();
             report.into_result()
         }
+        Command::Daemon => daemon::run(ctx),
     }
 }
 
@@ -119,7 +143,85 @@ fn status(ctx: &Context) -> Result<()> {
     if patch::dir_has_marker(&ctx.paths.legacy_dist) {
         println!("legacy       old Vencord-based build in {}", ctx.paths.legacy_dist.display());
     }
+
+    let config = Config::load(&ctx.paths.config());
+    let managed: Vec<&str> = config.branches.iter().map(|b| b.label()).collect();
+    println!("managed      {}", if managed.is_empty() { "none".to_string() } else { managed.join(", ") });
+    let pids: Vec<String> = system::processes_named(DAEMON_EXE).iter().map(|p| p.pid.to_string()).collect();
+    println!(
+        "daemon       {}",
+        if pids.is_empty() { "not running".to_string() } else { format!("running (pid {})", pids.join(", ")) }
+    );
+    println!("autostart    {}", system::autostart().unwrap_or_else(|| "off".into()));
     Ok(())
+}
+
+fn stop_daemon() -> bool {
+    let pids: Vec<u32> = system::processes_named(DAEMON_EXE).iter().map(|p| p.pid).collect();
+    if pids.is_empty() {
+        return false;
+    }
+    system::kill(&pids);
+    for _ in 0..20 {
+        if system::processes_named(DAEMON_EXE).is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    true
+}
+
+fn copy_binary(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    if system::same_file(from, to) {
+        return Ok(());
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temp = to.with_extension("exe.new");
+    fs::copy(from, &temp)?;
+    patch::retry(&format!("replacing {}", to.display()), || fs::rename(&temp, to))
+}
+
+pub fn setup_daemon(ctx: &Context, report: &mut Report) {
+    let result = (|| -> Result<()> {
+        let current = std::env::current_exe()?;
+        let source_daemon = current.with_file_name(DAEMON_EXE);
+        if !source_daemon.is_file() {
+            bail!("{} not found next to {}", DAEMON_EXE, current.display());
+        }
+        stop_daemon();
+        copy_binary(&current, &ctx.paths.cli_exe())?;
+        copy_binary(&source_daemon, &ctx.paths.daemon_exe())?;
+        system::set_autostart(&ctx.paths.daemon_exe())?;
+        system::spawn_detached(&ctx.paths.daemon_exe(), &[])?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => report.ok(format!("daemon running from {}, starts with Windows", ctx.paths.bin.display())),
+        Err(e) => report.fail(format!("daemon: {e:#}")),
+    }
+}
+
+pub fn teardown_daemon(ctx: &Context, report: &mut Report) {
+    if stop_daemon() {
+        report.ok("daemon stopped".into());
+    }
+    match system::remove_autostart() {
+        Ok(()) => {}
+        Err(e) => report.fail(format!("autostart: {e:#}")),
+    }
+    if fs::remove_file(ctx.paths.daemon_exe()).is_ok() {
+        report.ok(format!("removed {}", ctx.paths.daemon_exe().display()));
+    }
+    let current = std::env::current_exe().ok();
+    let cli = ctx.paths.cli_exe();
+    if current.as_deref().is_some_and(|c| system::same_file(c, &cli)) {
+        report.ok(format!("{} is in use, delete it after this command exits", cli.display()));
+    } else if fs::remove_file(&cli).is_ok() {
+        report.ok(format!("removed {}", cli.display()));
+    }
+    let _ = fs::remove_dir(&ctx.paths.bin);
 }
 
 pub fn select(installs: Vec<Install>, target: Option<Target>) -> Result<Vec<Install>> {
@@ -203,12 +305,17 @@ pub fn install(ctx: &Context, target: Option<Target>, force: bool, source: Optio
     report.ok(format!("payload ready in {}", dist.display()));
 
     let main_js = ctx.paths.main_js();
+    let mut config = Config::load(&ctx.paths.config());
     for install in select(installs, target)? {
         match patch::patch(&install.resources, &main_js, &ctx.paths.legacy_dist, force) {
-            Ok(action) => report.ok(format!("{} {}: {action}", install.branch, install.version)),
+            Ok(action) => {
+                config.add(install.branch);
+                report.ok(format!("{} {}: {action}", install.branch, install.version))
+            }
             Err(e) => report.fail(format!("{} {}: {e:#}", install.branch, install.version)),
         }
     }
+    config.save(&ctx.paths.config())?;
 
     let still_legacy = ctx.installs().iter().any(|i| ctx.state(i) == State::Legacy);
     if report.failures.is_empty() && !still_legacy {

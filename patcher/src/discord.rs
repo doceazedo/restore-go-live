@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Branch {
     Stable,
     Ptb,
@@ -22,6 +23,15 @@ impl Branch {
             Branch::Ptb => "ptb",
             Branch::Canary => "canary",
             Branch::Development => "development",
+        }
+    }
+
+    pub fn executable(self) -> &'static str {
+        match self {
+            Branch::Stable => "Discord.exe",
+            Branch::Ptb => "DiscordPTB.exe",
+            Branch::Canary => "DiscordCanary.exe",
+            Branch::Development => "DiscordDevelopment.exe",
         }
     }
 
