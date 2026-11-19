@@ -107,7 +107,7 @@ class Broadcast {
     }
 
     this.announceSelf(true);
-    void trackViewers(this.key!, currentUserId(), channelId, this.beaconMessageId!);
+    void trackViewers(this.key!, currentUserId(), channelId, this.beaconMessageId!, true);
     logger.info(`live session=${this.sessionId} audio=${this.hasAudio} channel=${channelId}`);
   }
 

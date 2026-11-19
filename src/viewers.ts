@@ -11,6 +11,7 @@ interface Tracked {
   ownerId: string;
   channelId: string;
   ids: Set<string>;
+  active: boolean;
 }
 
 const tracked = new Map<string, Tracked>();
@@ -21,6 +22,7 @@ function isWatchingEmoji(emoji: any) {
 }
 
 function publish(t: Tracked) {
+  if (!t.active) return;
   dispatch({
     type: "STREAM_UPDATE",
     streamKey: t.streamKey,
@@ -72,8 +74,8 @@ export function stopViewerTracking() {
   for (const messageId of [...tracked.keys()]) untrackViewers(messageId);
 }
 
-export async function trackViewers(streamKey: string, ownerId: string, channelId: string, messageId: string) {
-  const t: Tracked = { streamKey, ownerId, channelId, ids: new Set() };
+export async function trackViewers(streamKey: string, ownerId: string, channelId: string, messageId: string, active: boolean) {
+  const t: Tracked = { streamKey, ownerId, channelId, ids: new Set(), active };
   tracked.set(messageId, t);
   publish(t);
 
@@ -85,6 +87,13 @@ export async function trackViewers(streamKey: string, ownerId: string, channelId
     logger.warn(`could not fetch viewers of ${messageId}`, e);
     return [];
   }
+}
+
+export function setViewersActive(messageId: string, active: boolean) {
+  const t = tracked.get(messageId);
+  if (!t || t.active === active) return;
+  t.active = active;
+  publish(t);
 }
 
 export function untrackViewers(messageId: string) {

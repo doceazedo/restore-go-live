@@ -32,7 +32,7 @@ import {
   watchBeacons,
 } from "./signaling";
 import { clearJoinStages, JoinStage, setJoinStage } from "./status";
-import { markWatching, trackViewers, untrackViewers } from "./viewers";
+import { markWatching, setViewersActive, trackViewers, untrackViewers } from "./viewers";
 
 const logger = new Logger("P2PShare:watch");
 
@@ -192,7 +192,7 @@ class Watcher {
     };
     this.sessions.set(key, session);
     this.announceLocal(session, true);
-    void trackViewers(key, ownerId, channelId, messageId).then((found) => {
+    void trackViewers(key, ownerId, channelId, messageId, false).then((found) => {
       if (this.sessions.get(key) !== session || session.watching) return;
       if (found.includes(currentUserId())) void markWatching(channelId, messageId, false);
     });
@@ -217,10 +217,8 @@ class Watcher {
       logger.warn(`no voice state for ${owner}, cannot show native live badge`);
       return;
     }
-    const videoStreamId = announceVideo(owner, s.channelId, on);
-    logger.info(
-      `announced selfStream=${on} for ${owner} videoStreamId=${videoStreamId}`,
-    );
+    if (!on) announceVideo(owner, s.channelId, false);
+    logger.info(`announced selfStream=${on} for ${owner}`);
   }
 
   private applyAudioSettings(userId?: string) {
@@ -333,6 +331,7 @@ class Watcher {
       if (session.stream) refreshAttached(session.stream);
       announceVideo(session.ownerId, session.channelId, true);
       session.watching = true;
+      setViewersActive(session.messageId, true);
       void markWatching(session.channelId, session.messageId, true);
       logger.info(
         `watching ${key} tracks=${session.stream
@@ -361,6 +360,7 @@ class Watcher {
     setJoinStage(key, null);
     if (s.watching) {
       s.watching = false;
+      setViewersActive(s.messageId, false);
       void markWatching(s.channelId, s.messageId, false);
     }
     this.stopAudio(s);
