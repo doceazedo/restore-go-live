@@ -9,6 +9,12 @@ export const JoinStage = {
   WAITING_VIDEO: "Connected! Waiting for the first frame...",
 } as const;
 
+export const StartStage = {
+  CAPTURING: "Capturing your screen...",
+  CLEANING: "Cleaning up previous stream...",
+  PUBLISHING: "Announcing stream to the channel...",
+} as const;
+
 const stages = new Map<string, string>();
 const listeners = new Set<() => void>();
 

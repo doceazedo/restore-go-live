@@ -197,12 +197,12 @@ export default definePlugin({
     if (!stream) return false;
     const owner = stream.ownerId;
     if (!owner) return false;
-    if (owner === currentUserId()) return broadcast.active;
+    if (owner === currentUserId()) return broadcast.engaged;
     return watcher.ownsUser(owner);
   },
 
   isOurUserStream(userId: string) {
-    if (userId === currentUserId()) return broadcast.active;
+    if (userId === currentUserId()) return broadcast.engaged;
     return watcher.ownsUser(userId);
   },
 

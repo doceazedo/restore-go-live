@@ -5,7 +5,7 @@ import { streamKey } from "./core/session";
 import { captureScreen } from "./capture";
 import {
   addInterceptor, announceStream, announceVideo, currentUserId, dispatch, guildIdOf,
-  streamQuality, subscribe
+  refreshAttached, streamQuality, subscribe
 } from "./discord";
 import { answerViewer, applyBitrate, IceConfig, selectedPair, waitConnected } from "./peers";
 import { GoLiveSource } from "./source";
@@ -13,6 +13,7 @@ import {
   cleanupOwnLeftovers, clearBeacon, deleteWhenPeerGone, Handshake, publishBeacon, refreshBeacon,
   sendAnswer, watchOffers
 } from "./signaling";
+import { setJoinStage, StartStage } from "./status";
 import { trackViewers, untrackViewers } from "./viewers";
 
 const logger = new Logger("P2PShare:broadcast");
@@ -41,40 +42,81 @@ class Broadcast {
   private startedAt = 0;
   private stopHooks: Array<() => void> = [];
   private stopping = false;
+  private starting = false;
+  private cancelled = false;
   private opts: BroadcastOptions | null = null;
 
   get active() {
-    return this.stream !== null;
+    return this.stream !== null && !this.starting;
+  }
+
+  get engaged() {
+    return this.starting || this.stream !== null;
   }
 
   get key() {
-    return this.active ? streamKey(this.guildId, this.channelId, currentUserId()) : null;
+    return this.engaged ? streamKey(this.guildId, this.channelId, currentUserId()) : null;
   }
 
   async start(channelId: string, opts: BroadcastOptions) {
-    if (this.active) return;
+    if (this.engaged) return;
+    this.starting = true;
+    this.cancelled = false;
     this.opts = opts;
     this.channelId = channelId;
     this.guildId = guildIdOf(channelId);
+    this.preview = new MediaStream();
+    const key = this.key!;
 
-    const { height, fps } = streamQuality();
-    logger.info(`capturing at ${height}p ${fps}fps from discord settings`);
+    this.stopHooks.push(addInterceptor((action: any) => {
+      if (action?.type !== "STREAM_TIMED_OUT") return false;
+      return this.engaged && action.streamKey === this.key;
+    }));
 
-    const capture = await captureScreen(fps, height, opts.audioPreference, opts.source);
-    this.stream = capture.stream;
-    this.preview = new MediaStream(capture.stream.getVideoTracks());
-    this.hasAudio = capture.hasAudio;
+    for (const event of ["STREAM_STOP", "STREAM_DELETE", "STREAM_CLOSE"]) {
+      this.stopHooks.push(subscribe(event, () => {
+        if (!this.stopping && this.engaged) {
+          logger.info(`${event} observed, tearing down`);
+          void this.stop();
+        }
+      }));
+    }
 
-    capture.stream.getVideoTracks()[0]?.addEventListener("ended", () => void this.stop());
-
-    this.startedAt = Date.now();
-    await cleanupOwnLeftovers(channelId);
+    this.announceSelf(true);
 
     try {
-      this.beaconMessageId = await publishBeacon(channelId, this.beacon());
+      const { height, fps } = streamQuality();
+      logger.info(`capturing at ${height}p ${fps}fps from discord settings`);
+      setJoinStage(key, StartStage.CAPTURING);
+
+      const capture = await captureScreen(fps, height, opts.audioPreference, opts.source);
+      this.stream = capture.stream;
+      this.hasAudio = capture.hasAudio;
+      this.ensureNotCancelled();
+
+      capture.stream.getVideoTracks()[0]?.addEventListener("ended", () => void this.stop());
+
+      this.startedAt = Date.now();
+      setJoinStage(key, StartStage.CLEANING);
+      await cleanupOwnLeftovers(channelId);
+      this.ensureNotCancelled();
+
+      setJoinStage(key, StartStage.PUBLISHING);
+      try {
+        this.beaconMessageId = await publishBeacon(channelId, this.beacon());
+      } catch (e) {
+        throw new Error(`could not post beacon: ${(e as Error).message}`);
+      }
+      this.ensureNotCancelled();
     } catch (e) {
-      await this.teardownMedia();
-      throw new Error(`could not post beacon: ${(e as Error).message}`);
+      this.starting = false;
+      setJoinStage(key, null);
+      await this.teardown();
+      if (e instanceof StartCancelled) {
+        logger.info("start cancelled during setup");
+        return;
+      }
+      throw e;
     }
 
     this.heartbeatTimer = setInterval(() => {
@@ -85,28 +127,20 @@ class Broadcast {
       this.onOffer(h, msg).catch(err => logger.error("offer handling failed", err));
     });
 
-    this.stopHooks.push(addInterceptor((action: any) => {
-      if (action?.type !== "STREAM_TIMED_OUT") return false;
-      if (!this.active || action.streamKey !== this.key) return false;
-      return true;
-    }));
-
     for (const event of ["STREAM_UPDATE_SETTINGS", "MEDIA_ENGINE_SET_GO_LIVE_SOURCE"]) {
       this.stopHooks.push(subscribe(event, () => void this.applyQuality()));
     }
 
-    for (const event of ["STREAM_STOP", "STREAM_DELETE", "STREAM_CLOSE"]) {
-      this.stopHooks.push(subscribe(event, () => {
-        if (!this.stopping && this.active) {
-          logger.info(`${event} observed, tearing down`);
-          void this.stop();
-        }
-      }));
-    }
-
-    this.announceSelf(true);
-    void trackViewers(this.key!, currentUserId(), channelId, this.beaconMessageId!, true);
+    this.starting = false;
+    setJoinStage(key, null);
+    for (const track of this.stream!.getVideoTracks()) this.preview.addTrack(track);
+    refreshAttached(this.preview);
+    void trackViewers(key, currentUserId(), channelId, this.beaconMessageId!, true);
     logger.info(`live beacon=${this.beaconMessageId} audio=${this.hasAudio} channel=${channelId}`);
+  }
+
+  private ensureNotCancelled() {
+    if (this.cancelled) throw new StartCancelled();
   }
 
   private beacon(): Beacon {
@@ -164,7 +198,7 @@ class Broadcast {
       dispatch({
         type: "STREAM_CREATE",
         streamKey: key,
-        rtcServerId: `p2p-${this.beaconMessageId}`,
+        rtcServerId: `p2p-${this.channelId}`,
         rtcChannelId: this.channelId,
         region: "p2p",
         viewerIds: []
@@ -209,9 +243,19 @@ class Broadcast {
   }
 
   async stop() {
-    if (!this.active || this.stopping) return;
-    this.stopping = true;
+    if (this.starting) {
+      this.cancelled = true;
+      return;
+    }
+    if (!this.active) return;
     logger.info("stopping broadcast");
+    await this.teardown();
+    logger.info("broadcast stopped");
+  }
+
+  private async teardown() {
+    if (this.stopping) return;
+    this.stopping = true;
     for (const off of this.stopHooks) off();
     this.stopHooks = [];
     this.stopOffers?.();
@@ -226,8 +270,9 @@ class Broadcast {
     if (this.beaconMessageId) await clearBeacon(this.channelId, this.beaconMessageId);
     this.beaconMessageId = null;
     this.stopping = false;
-    logger.info("broadcast stopped");
   }
 }
+
+class StartCancelled extends Error {}
 
 export const broadcast = new Broadcast();
